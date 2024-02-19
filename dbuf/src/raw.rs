@@ -61,3 +61,17 @@ impl<T> ops::Deref for Cow<'_, T> {
         }
     }
 }
+
+#[non_exhaustive]
+pub struct Split<'a, T, Extras: ?Sized> {
+    pub read: &'a T,
+    pub write: &'a T,
+    pub extras: &'a Extras,
+}
+
+#[non_exhaustive]
+pub struct SplitMut<'a, T, Extras: ?Sized> {
+    pub read: &'a T,
+    pub write: &'a mut T,
+    pub extras: &'a Extras,
+}

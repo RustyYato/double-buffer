@@ -1,10 +1,12 @@
-use core::ops;
+use core::{ops, task::Context};
 
 use crate::raw::Cow;
 
 pub(crate) type WriterId<S> = <S as Strategy>::WriterId;
 pub(crate) type ReaderId<S> = <S as Strategy>::ReaderId;
 pub(crate) type ReaderGuard<S> = <S as Strategy>::ReadGuard;
+pub(crate) type Swap<S> = <S as Strategy>::Swap;
+pub(crate) type SwapError<S> = <S as Strategy>::SwapError;
 
 pub unsafe trait IntoDoubleBufferWriterPointer:
     ops::DerefMut<Target = crate::raw::DoubleBufferData<Self::Buffer, Self::Strategy, Self::Extras>>
@@ -61,6 +63,7 @@ pub unsafe trait Strategy {
     type ReaderId;
 
     type Swap;
+    type SwapError;
 
     type ReadGuard;
 
@@ -76,15 +79,18 @@ pub unsafe trait Strategy {
 
     // accessors
 
-    fn is_swapped_exclusive(&self, writer: &mut Self::WriterId) -> bool;
+    unsafe fn is_swapped_exclusive(&self, writer: &mut Self::WriterId) -> bool;
 
-    fn is_swapped_shared(&self, writer: &Self::WriterId) -> bool;
+    unsafe fn is_swapped_shared(&self, writer: &Self::WriterId) -> bool;
 
-    fn is_swapped(&self, guard: &Self::ReadGuard) -> bool;
+    unsafe fn is_swapped(&self, guard: &Self::ReadGuard) -> bool;
 
     // swap handlers
 
-    unsafe fn start_swap(&self, writer: &mut Self::WriterId) -> Self::Swap;
+    unsafe fn try_start_swap(
+        &self,
+        writer: &mut Self::WriterId,
+    ) -> Result<Self::Swap, Self::SwapError>;
 
     unsafe fn is_swap_finished(&self, writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool;
 
@@ -95,6 +101,15 @@ pub unsafe trait Strategy {
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard;
 
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, guard: Self::ReadGuard);
+}
+
+pub unsafe trait AsyncStrategy: Strategy {
+    unsafe fn register_context(
+        &self,
+        writer: &mut Self::WriterId,
+        swap: &mut Self::Swap,
+        ctx: &mut Context<'_>,
+    );
 }
 
 pub(crate) unsafe fn create_invalid_reader_id<S: Strategy>() -> S::ReaderId {

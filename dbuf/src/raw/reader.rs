@@ -44,7 +44,7 @@ impl<P: DoubleBufferReaderPointer> Reader<P> {
     pub fn try_read(&mut self) -> Result<ReaderGuard<'_, P::Buffer, P::Writer>, P::UpgradeError> {
         let ptr = self.ptr.try_writer()?;
         let guard = unsafe { ptr.strategy.acquire_read_guard(&mut self.id) };
-        let swapped = ptr.strategy.is_swapped(&guard);
+        let swapped = unsafe { ptr.strategy.is_swapped(&guard) };
 
         let (reader, _) = ptr.buffers.get(swapped);
 
