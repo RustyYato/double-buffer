@@ -31,6 +31,9 @@ pub struct FlashStrategy<ParkToken> {
     park_token: Cell<Option<ParkToken>>,
 }
 
+unsafe impl<ParkToken: Send> Send for FlashStrategy<ParkToken> {}
+unsafe impl<ParkToken: Send> Sync for FlashStrategy<ParkToken> {}
+
 const NOT_SWAPPED: usize = 0;
 const SWAPPED: usize = 1;
 const READER_ACTIVE: usize = 2;
@@ -226,12 +229,12 @@ unsafe impl<ParkToken: self::ParkToken> Strategy for FlashStrategy<ParkToken> {
 
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard {
         let swap_state = self.swap_state.load(Ordering::Acquire);
+        let reader_id = &reader.id;
         assert_eq!(
-            reader.id.load(Ordering::Relaxed) & READER_ACTIVE,
+            reader_id.load(Ordering::Relaxed) & READER_ACTIVE,
             0,
             "Detected a leaked read guard"
         );
-        let reader_id = &reader.id;
         reader_id.store(swap_state | READER_ACTIVE, Ordering::Release);
         ReadGuard { swap_state }
     }
