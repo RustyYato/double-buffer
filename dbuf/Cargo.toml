@@ -3,4 +3,20 @@ name = "dbuf"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+
+default = []
+
+std = ["alloc"]
+alloc = ["dep:rc-box"]
+triomphe = ["dep:triomphe"]
+
 [dependencies]
+
+[dependencies.rc-box]
+optional = true
+version = "1"
+
+[dependencies.triomphe]
+optional = true
+version = "0.1.11"
