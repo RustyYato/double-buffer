@@ -15,7 +15,7 @@ use std::{
 
 use crate::interface::{AsyncStrategy, Strategy};
 
-use slab::Slab;
+use std::vec::Vec;
 use triomphe::Arc;
 
 #[cfg(test)]
@@ -26,7 +26,7 @@ pub struct AsyncParkToken(Waker);
 
 pub struct FlashStrategy<ParkToken> {
     swap_state: AtomicUsize,
-    readers: Mutex<Slab<Arc<AtomicUsize>>>,
+    readers: Mutex<Vec<Arc<AtomicUsize>>>,
     residual: AtomicIsize,
     park_token: Cell<Option<ParkToken>>,
 }
@@ -62,7 +62,7 @@ impl<ParkToken> FlashStrategy<ParkToken> {
     pub const fn with_park_token() -> Self {
         Self {
             swap_state: AtomicUsize::new(NOT_SWAPPED),
-            readers: Mutex::new(Slab::new()),
+            readers: Mutex::new(Vec::new()),
             residual: AtomicIsize::new(0),
             park_token: Cell::new(None),
         }
@@ -73,7 +73,7 @@ impl<ParkToken> FlashStrategy<ParkToken> {
     fn create_reader_id(&self) -> ReaderId {
         let mut readers = self.readers.lock().unwrap_or_else(PoisonError::into_inner);
         let reader = Arc::new(AtomicUsize::new(0));
-        readers.insert(reader.clone());
+        readers.push(reader.clone());
         ReaderId { id: reader }
     }
 }
@@ -184,7 +184,7 @@ unsafe impl<ParkToken: self::ParkToken> Strategy for FlashStrategy<ParkToken> {
         let residual_swap_state = old_swap_state | READER_ACTIVE;
         let mut residual = 0;
 
-        readers.retain(|_, reader| {
+        readers.retain(|reader| {
             if Arc::is_unique(reader) {
                 return false;
             }
