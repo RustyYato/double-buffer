@@ -1,9 +1,10 @@
 use core::ops;
 
-use alloc::borrow::Cow;
+use crate::raw::Cow;
 
 pub(crate) type WriterId<S> = <S as Strategy>::WriterId;
 pub(crate) type ReaderId<S> = <S as Strategy>::ReaderId;
+pub(crate) type ReaderGuard<S> = <S as Strategy>::ReadGuard;
 
 pub unsafe trait IntoDoubleBufferWriterPointer:
     ops::DerefMut<Target = crate::raw::DoubleBufferData<Self::Buffer, Self::Strategy, Self::Extras>>
@@ -73,6 +74,14 @@ pub unsafe trait Strategy {
 
     unsafe fn create_invalid_reader_id() -> Self::ReaderId;
 
+    // accessors
+
+    fn is_swapped_exclusive(&self, writer: &mut Self::WriterId) -> bool;
+
+    fn is_swapped_shared(&self, writer: &Self::WriterId) -> bool;
+
+    fn is_swapped(&self, guard: &Self::ReadGuard) -> bool;
+
     // swap handlers
 
     unsafe fn start_swap(&self, writer: &mut Self::WriterId) -> Self::Swap;
@@ -83,9 +92,9 @@ pub unsafe trait Strategy {
 
     // reader registration
 
-    unsafe fn acquire_read_guard(&self, reader: &Self::ReaderId) -> Self::ReadGuard;
+    unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard;
 
-    unsafe fn release_read_guard(&self, reader: &Self::ReaderId, guard: Self::ReadGuard);
+    unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, guard: Self::ReadGuard);
 }
 
 pub(crate) unsafe fn create_invalid_reader_id<S: Strategy>() -> S::ReaderId {

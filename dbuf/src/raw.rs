@@ -1,4 +1,4 @@
-use core::cell::UnsafeCell;
+use core::{cell::UnsafeCell, ops};
 
 mod reader;
 mod writer;
@@ -41,6 +41,23 @@ impl<T, S, Extras> DoubleBufferData<T, S, Extras> {
             },
             strategy,
             extras,
+        }
+    }
+}
+
+pub enum Cow<'a, T> {
+    Borrowed(&'a T),
+    Owned(T),
+}
+
+impl<T> ops::Deref for Cow<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Cow::Borrowed(x) => x,
+            Cow::Owned(x) => x,
         }
     }
 }
