@@ -5,9 +5,9 @@ edition = "2021"
 
 [features]
 
-default = []
+default = ["std", "triomphe"]
 
-std = ["alloc"]
+std = ["alloc", "dep:slab"]
 alloc = ["dep:rc-box"]
 triomphe = ["dep:triomphe"]
 
@@ -16,7 +16,14 @@ triomphe = ["dep:triomphe"]
 [dependencies.rc-box]
 optional = true
 version = "1"
+default-features = false
 
 [dependencies.triomphe]
 optional = true
 version = "0.1.11"
+default-features = false
+
+[dependencies.slab]
+optional = true
+version = "0.4"
+default-features = false

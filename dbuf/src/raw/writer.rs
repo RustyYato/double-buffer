@@ -83,7 +83,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     }
 
     pub fn try_swap(&mut self) -> Result<(), iface::SwapError<P::Strategy>> {
-        let swap = self.try_start_swap()?;
+        let swap = unsafe { self.try_start_swap()? };
         unsafe { self.finish_swap(swap) }
         Ok(())
     }
@@ -130,7 +130,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
             }
         }
 
-        let mut swap = self.try_start_swap()?;
+        let mut swap = unsafe { self.try_start_swap()? };
 
         WaitForSwap {
             strategy: &self.ptr.strategy,
@@ -158,7 +158,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         }
     }
 
-    pub fn try_start_swap(
+    pub unsafe fn try_start_swap(
         &mut self,
     ) -> Result<iface::Swap<P::Strategy>, iface::SwapError<P::Strategy>> {
         unsafe { self.ptr.strategy.try_start_swap(&mut self.id) }
