@@ -27,3 +27,7 @@ default-features = false
 optional = true
 version = "0.4"
 default-features = false
+
+[dev-dependencies.pollster]
+vesrion = "0.3"
+features = ["macro"]

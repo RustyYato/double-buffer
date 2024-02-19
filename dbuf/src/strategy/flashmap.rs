@@ -6,24 +6,29 @@ use core::{
     cell::Cell,
     mem::MaybeUninit,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
+    task::Waker,
 };
 use std::{
     sync::{Mutex, Once, PoisonError},
     thread::Thread,
 };
 
-use crate::interface::Strategy;
+use crate::interface::{AsyncStrategy, Strategy};
 
 use slab::Slab;
 use triomphe::Arc;
 
+#[cfg(test)]
 mod test;
 
-pub struct FlashStrategy {
+pub struct ThreadParkToken(Thread);
+pub struct AsyncParkToken(Waker);
+
+pub struct FlashStrategy<ParkToken> {
     swap_state: AtomicUsize,
     readers: Mutex<Slab<Arc<AtomicUsize>>>,
     residual: AtomicIsize,
-    park_token: Cell<Option<Thread>>,
+    park_token: Cell<Option<ParkToken>>,
 }
 
 const NOT_SWAPPED: usize = 0;
@@ -39,12 +44,19 @@ pub struct ReadGuard {
     swap_state: usize,
 }
 
-pub struct Swap {
+pub struct Swap<Store> {
     residual: isize,
+    storage: Store,
 }
 
-impl FlashStrategy {
+impl FlashStrategy<ThreadParkToken> {
     pub const fn new() -> Self {
+        Self::with_park_token()
+    }
+}
+
+impl<ParkToken> FlashStrategy<ParkToken> {
+    pub const fn with_park_token() -> Self {
         Self {
             swap_state: AtomicUsize::new(NOT_SWAPPED),
             readers: Mutex::new(Slab::new()),
@@ -52,7 +64,9 @@ impl FlashStrategy {
             park_token: Cell::new(None),
         }
     }
+}
 
+impl<ParkToken> FlashStrategy<ParkToken> {
     fn create_reader_id(&self) -> ReaderId {
         let mut readers = self.readers.lock().unwrap_or_else(PoisonError::into_inner);
         let reader = Arc::new(AtomicUsize::new(0));
@@ -61,11 +75,55 @@ impl FlashStrategy {
     }
 }
 
-unsafe impl Strategy for FlashStrategy {
+pub unsafe trait ParkToken: Sized {
+    type SwapStorage: Default;
+
+    fn new(swap: &mut Swap<Self::SwapStorage>) -> Option<Self>;
+
+    fn wake(self);
+
+    fn wait();
+}
+
+unsafe impl ParkToken for ThreadParkToken {
+    type SwapStorage = ();
+
+    fn new(_writer: &mut Swap<Self::SwapStorage>) -> Option<Self> {
+        Some(Self(std::thread::current()))
+    }
+
+    fn wake(self) {
+        self.0.unpark()
+    }
+
+    fn wait() {
+        std::thread::park()
+    }
+}
+
+unsafe impl ParkToken for AsyncParkToken {
+    type SwapStorage = Option<Waker>;
+
+    fn new(swap: &mut Swap<Self::SwapStorage>) -> Option<Self> {
+        swap.storage.take().map(Self)
+    }
+
+    fn wake(self) {
+        self.0.wake()
+    }
+
+    fn wait() {
+        loop {
+            std::thread::park()
+        }
+    }
+}
+
+unsafe impl<ParkToken: self::ParkToken> Strategy for FlashStrategy<ParkToken> {
     type WriterId = WriterId;
     type ReaderId = ReaderId;
 
-    type Swap = Swap;
+    type Swap = Swap<ParkToken::SwapStorage>;
     type SwapError = core::convert::Infallible;
 
     type ReadGuard = ReadGuard;
@@ -137,21 +195,24 @@ unsafe impl Strategy for FlashStrategy {
             true
         });
 
-        Ok(Swap { residual })
+        Ok(Swap {
+            residual,
+            storage: Default::default(),
+        })
     }
 
     unsafe fn is_swap_finished(&self, _writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool {
         self.residual.load(Ordering::Acquire) == -swap.residual
     }
 
-    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, swap: Self::Swap) {
+    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
         if self.residual.load(Ordering::Acquire) == -swap.residual {
             self.residual.fetch_add(swap.residual, Ordering::Release);
             return;
         }
 
-        let current = std::thread::current();
-        self.park_token.set(Some(current));
+        let current = ParkToken::new(&mut swap);
+        self.park_token.set(current);
         let residual = self.residual.fetch_add(swap.residual, Ordering::Release);
 
         // if all residual readers finished already
@@ -160,7 +221,7 @@ unsafe impl Strategy for FlashStrategy {
             return;
         }
 
-        std::thread::park();
+        ParkToken::wait()
     }
 
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard {
@@ -199,8 +260,19 @@ unsafe impl Strategy for FlashStrategy {
 
         // if this is the last residual reader, then wake up the writer
 
-        let token = self.park_token.take().unwrap();
+        if let Some(token) = self.park_token.take() {
+            token.wake();
+        }
+    }
+}
 
-        token.unpark();
+unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
+    unsafe fn register_context(
+        &self,
+        _writer: &mut Self::WriterId,
+        swap: &mut Self::Swap,
+        ctx: &mut core::task::Context<'_>,
+    ) {
+        swap.storage = Some(ctx.waker().clone());
     }
 }
