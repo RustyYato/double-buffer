@@ -15,7 +15,7 @@ pub struct Writer<
 }
 
 pub fn new_writer<T: IntoDoubleBufferWriterPointer>(mut ptr: T) -> Writer<T::Writer> {
-    let id = unsafe { ptr.strategy.create_writer_id() };
+    let id = ptr.strategy.create_writer_id();
     let ptr = ptr.into_writer();
 
     Writer { id, ptr }
@@ -52,7 +52,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     pub fn split(&self) -> Split<P::Buffer, P::Extras> {
         let dbuf = &*self.ptr;
 
-        let swapped = unsafe { dbuf.strategy.is_swapped_shared(&self.id) };
+        let swapped = unsafe { dbuf.strategy.is_swapped_writer(&self.id) };
 
         let (read, write) = dbuf.buffers.get(swapped);
 
@@ -69,7 +69,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     pub fn split_mut(&mut self) -> SplitMut<P::Buffer, P::Extras> {
         let dbuf = &*self.ptr;
 
-        let swapped = unsafe { dbuf.strategy.is_swapped_exclusive(&mut self.id) };
+        let swapped = unsafe { dbuf.strategy.is_swapped_writer(&self.id) };
 
         let (read, write) = dbuf.buffers.get(swapped);
 

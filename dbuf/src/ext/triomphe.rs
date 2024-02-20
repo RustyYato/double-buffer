@@ -8,6 +8,10 @@ use crate::{
 
 use triomphe::{Arc, OffsetArc, UniqueArc};
 
+// SAFETY: UniqueArc is guaranteed to not be aliased
+// and will point to the same value as the Arc created from UniqueArc::shareable
+// And Arc::into_raw_offset will point to the same value as it's argument
+// so by transitivity into_writer will point to the same value
 unsafe impl<T, S: Strategy, Extras> IntoDoubleBufferWriterPointer
     for UniqueArc<DoubleBufferData<T, S, Extras>>
 {
@@ -22,6 +26,8 @@ unsafe impl<T, S: Strategy, Extras> IntoDoubleBufferWriterPointer
     }
 }
 
+// SAFETY: Self::deref does not change which [`DoubleBufferData`] it points to
+// Self::reader -> try_reader will return self
 unsafe impl<T, S: Strategy, Extras> DoubleBufferWriterPointer
     for OffsetArc<DoubleBufferData<T, S, Extras>>
 {
@@ -37,6 +43,11 @@ unsafe impl<T, S: Strategy, Extras> DoubleBufferWriterPointer
     }
 }
 
+// SAFETY: as long as the only usage of this type is through try_writer;
+// * multiple calls to try_writer must yield the same writer
+//  Cow::Borrowed does always points to the same value
+// * once try_writer returns [`Err`], it must never return [`Ok`] again
+//  try_writer never returns [`Err`], so this condition isn't relevant
 unsafe impl<T, S: Strategy, Extras> DoubleBufferReaderPointer
     for OffsetArc<DoubleBufferData<T, S, Extras>>
 {

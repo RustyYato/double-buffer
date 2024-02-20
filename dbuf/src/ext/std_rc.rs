@@ -9,6 +9,8 @@ use crate::{
 use alloc::rc::{Rc, Weak};
 use rc_box::RcBox;
 
+// SAFETY: RcBox is guaranteed to not be aliased
+// and will point to the same value as the Arc created from RcBox::into
 unsafe impl<T, S: Strategy, Extras> IntoDoubleBufferWriterPointer
     for RcBox<DoubleBufferData<T, S, Extras>>
 {
@@ -23,6 +25,8 @@ unsafe impl<T, S: Strategy, Extras> IntoDoubleBufferWriterPointer
     }
 }
 
+// SAFETY: Self::deref does not change which [`DoubleBufferData`] it points to
+// Self::reader -> try_reader will return self
 unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferWriterPointer
     for Rc<DoubleBufferData<T, S, Extras>>
 {
@@ -38,6 +42,12 @@ unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferWriterPointer
     }
 }
 
+// SAFETY: as long as the only usage of this type is through try_writer;
+// * multiple calls to try_writer must yield the same writer
+//  Self::upgrade always yields the same Rc
+// * once try_writer returns [`Err`], it must never return [`Ok`] again
+//  Self::upgrade will only return None if there are no more Rcs
+//  and it's not possible to revive an Rc from a Weak after it has been destroyed
 unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferReaderPointer
     for Weak<DoubleBufferData<T, S, Extras>>
 {

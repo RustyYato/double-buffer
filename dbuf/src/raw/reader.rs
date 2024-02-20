@@ -79,7 +79,7 @@ impl<P: DoubleBufferReaderPointer> Clone for Reader<P> {
     fn clone(&self) -> Self {
         let id = match self.ptr.try_writer() {
             Ok(ptr) => unsafe { ptr.strategy.create_reader_id_from_reader(&self.id) },
-            Err(_) => unsafe { create_invalid_reader_id::<P::Strategy>() },
+            Err(_) => create_invalid_reader_id::<P::Strategy>(),
         };
 
         unsafe { Self::from_raw_parts(id, self.ptr.clone()) }

@@ -8,6 +8,14 @@ pub(crate) type ReaderGuard<S> = <S as Strategy>::ReadGuard;
 pub(crate) type Swap<S> = <S as Strategy>::Swap;
 pub(crate) type SwapError<S> = <S as Strategy>::SwapError;
 
+/// Convert a pointer into a writer pointer
+///
+/// # Safety
+///
+/// Self::deref, Self::deref_mut, Self::Writer::deref, Self::Writer::deref_mut
+/// must all point to the same [`DoubleBufferData`]
+///
+/// the writer produced by into_writer must not be aliased
 pub unsafe trait IntoDoubleBufferWriterPointer:
     ops::DerefMut<Target = crate::raw::DoubleBufferData<Self::Buffer, Self::Strategy, Self::Extras>>
 {
@@ -24,6 +32,11 @@ pub unsafe trait IntoDoubleBufferWriterPointer:
     fn into_writer(self) -> Self::Writer;
 }
 
+/// A pointer that can access a and may hold ownership over a [`DoubleBufferData`]
+///
+/// # Safety
+///
+/// Self::deref  must not change which [`DoubleBufferData`] it points to.
 pub unsafe trait DoubleBufferWriterPointer:
     Clone
     + ops::Deref<Target = crate::raw::DoubleBufferData<Self::Buffer, Self::Strategy, Self::Extras>>
@@ -42,6 +55,14 @@ pub unsafe trait DoubleBufferWriterPointer:
     fn reader(&self) -> Self::Reader;
 }
 
+/// A pointer doesn't usually doesn't hold ownership over a [`DoubleBufferData`],
+/// but may be converted to a [`DoubleBufferWriterPointer`] to access it.
+///
+/// # Safety
+///
+/// as long as the only usage of this type is through try_writer;
+/// * multiple calls to try_writer must yield the same writer
+/// * once try_writer returns [`Err`], it must never return [`Ok`] again
 pub unsafe trait DoubleBufferReaderPointer: Clone {
     type Writer: DoubleBufferWriterPointer<
         Reader = Self,
@@ -58,6 +79,14 @@ pub unsafe trait DoubleBufferReaderPointer: Clone {
     fn try_writer(&self) -> Result<Cow<'_, Self::Writer>, Self::UpgradeError>;
 }
 
+/// The syncronization strategy of the double buffer
+///
+/// # Safety
+///
+/// first some terminology, there is an active read during the time
+/// between a call to [`acquire_read_guard`] and [`release_read_guard`]
+///
+/// * finish_swap must not return if there is an active read
 pub unsafe trait Strategy {
     type WriterId;
     type ReaderId;
@@ -69,41 +98,114 @@ pub unsafe trait Strategy {
 
     // id constructors
 
-    unsafe fn create_writer_id(&mut self) -> Self::WriterId;
+    /// Creates a valid writer id for this strategy, and invalidates all writer ids
+    /// and reader ids created by this strategy before this call to [`create_writer_id`].
+    fn create_writer_id(&mut self) -> Self::WriterId;
 
+    /// Creates a valid reader id from the provided writer id
+    ///
+    /// # Safety
+    ///
+    /// The writer id must be valid for this strategy
     unsafe fn create_reader_id_from_writer(&self, writer: &Self::WriterId) -> Self::ReaderId;
 
+    /// Creates a valid reader id from the provided reader id
+    ///
+    /// # Safety
+    ///
+    /// The reader id
     unsafe fn create_reader_id_from_reader(&self, reader: &Self::ReaderId) -> Self::ReaderId;
 
-    unsafe fn create_invalid_reader_id() -> Self::ReaderId;
+    /// Creates an invalid reader id
+    ///
+    /// This is useful if you need *some* reader id, but it won't be used by anyone
+    fn create_invalid_reader_id() -> Self::ReaderId;
 
     // accessors
 
-    unsafe fn is_swapped_exclusive(&self, writer: &mut Self::WriterId) -> bool;
+    /// Returns true if the number of successful calls to try_start_swap is odd
+    ///
+    /// May only be called from the writer
+    ///
+    /// # Safety
+    ///
+    /// The writer id must be valid
+    unsafe fn is_swapped_writer(&self, writer: &Self::WriterId) -> bool;
 
-    unsafe fn is_swapped_shared(&self, writer: &Self::WriterId) -> bool;
-
+    /// Returns true if the number of successful calls to try_start_swap is odd
+    ///
+    /// May only be called from the reader once a guard is taken
+    ///
+    /// # Safety
+    ///
+    /// The reader guard must have been created from a valid reader id
+    /// and that reader id must still be valid
     unsafe fn is_swapped(&self, guard: &Self::ReadGuard) -> bool;
 
     // swap handlers
 
+    /// Tries to start a swap
+    ///
+    /// If the buffers can be swapped without issues, then they will be swapped
+    /// and this function will return Ok
+    /// otherwise this function will return Err (and the buffers will not be swapped)
+    ///
+    /// # Safety
+    ///
+    /// the writer id must be valid
     unsafe fn try_start_swap(
         &self,
         writer: &mut Self::WriterId,
     ) -> Result<Self::Swap, Self::SwapError>;
 
+    /// Returns true if the latest swap is finished
+    ///
+    /// # Safety
+    ///
+    /// the writer id must be valid
+    /// the swap must have been created by this strategy and this writer id
+    /// this must be the latest swap created by this strategy and writer id
     unsafe fn is_swap_finished(&self, writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool;
 
+    /// Waits until the latest swap is finished
+    ///
+    /// If is_swap_finished returned true before this is called (with the same arguments)
+    /// then this function will return without blocking.
+    ///
+    /// # Safety
+    ///
+    /// the writer id must be valid
+    /// the swap must have been created by this strategy and this writer id
+    /// this must be the latest swap created by this strategy and writer id
     unsafe fn finish_swap(&self, writer: &mut Self::WriterId, swap: Self::Swap);
 
     // reader registration
 
+    /// Acquires a read guard. This ensures that the writer does not have write access to the
+    /// current buffer while the read guard is active
+    ///
+    /// # Safety
+    ///
+    /// The reader id must be valid
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard;
 
+    /// Release a read guard. This allows the writer to write the buffer that this guard protects
+    /// if there are no other active reads to that buffer
+    ///
+    /// # Safety
+    ///
+    /// The reader id must be valid
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, guard: Self::ReadGuard);
 }
 
-pub unsafe trait AsyncStrategy: Strategy {
+pub trait AsyncStrategy: Strategy {
+    /// registers a async context to an ongoing swap
+    ///
+    /// # Safety
+    ///
+    /// the writer id must be valid
+    /// the swap must have been created by this strategy and this writer id
+    /// this must be the latest swap created by this strategy and writer id
     unsafe fn register_context(
         &self,
         writer: &mut Self::WriterId,
@@ -112,6 +214,6 @@ pub unsafe trait AsyncStrategy: Strategy {
     );
 }
 
-pub(crate) unsafe fn create_invalid_reader_id<S: Strategy>() -> S::ReaderId {
+pub(crate) fn create_invalid_reader_id<S: Strategy>() -> S::ReaderId {
     S::create_invalid_reader_id()
 }
