@@ -24,5 +24,5 @@ version = "0.1.11"
 default-features = false
 
 [dev-dependencies.pollster]
-vesrion = "0.3"
+version = "0.3"
 features = ["macro"]

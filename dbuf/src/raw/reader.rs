@@ -26,7 +26,13 @@ struct RawReaderGuard<'a, P: DoubleBufferWriterPointer> {
 
 impl<P: DoubleBufferWriterPointer> Drop for RawReaderGuard<'_, P> {
     fn drop(&mut self) {
+        // SAFETY: self.guard isn't dropped before this (in fact, it's not even access between
+        // construction and here)
         let guard = unsafe { ManuallyDrop::take(&mut self.guard) };
+        // SAFETY: the reader id was set by a valid reader and self.writer
+        // ensures that the strategy wasn't dropped or granted exclusive access elsewhere
+        // so the reader id must still be value (no one else is allowed to call
+        // Strategy::create_writer_id)
         unsafe {
             self.writer
                 .strategy
@@ -37,18 +43,21 @@ impl<P: DoubleBufferWriterPointer> Drop for RawReaderGuard<'_, P> {
 
 impl<P: DoubleBufferReaderPointer> Reader<P> {
     #[inline]
-    pub(crate) unsafe fn from_raw_parts(id: ReaderId<P::Strategy>, ptr: P) -> Self {
+    pub(crate) const unsafe fn from_raw_parts(id: ReaderId<P::Strategy>, ptr: P) -> Self {
         Self { id, ptr }
     }
 
     pub fn try_read(&mut self) -> Result<ReaderGuard<'_, P::Buffer, P::Writer>, P::UpgradeError> {
         let ptr = self.ptr.try_writer()?;
+        // SAFETY: the reader id is valid (this is an invariant of Self)
         let guard = unsafe { ptr.strategy.acquire_read_guard(&mut self.id) };
-        let swapped = unsafe { ptr.strategy.is_swapped(&guard) };
+        // SAFETY: the guard was created from the given reader id, and is the latest guard
+        let swapped = unsafe { ptr.strategy.is_swapped(&mut self.id, &guard) };
 
         let (reader, _) = ptr.buffers.get(swapped);
 
         Ok(ReaderGuard {
+            // SAFETY: the pointer from ptr.buffers.get are always non-null
             ptr: unsafe { NonNull::new_unchecked(reader.cast_mut()) },
             raw: RawReaderGuard {
                 guard: ManuallyDrop::new(guard),
@@ -78,10 +87,13 @@ impl<P: DoubleBufferReaderPointer> Clone for Reader<P> {
     #[inline]
     fn clone(&self) -> Self {
         let id = match self.ptr.try_writer() {
+            // SAFETY: the reader id is valid (this is an invariant of Self)
             Ok(ptr) => unsafe { ptr.strategy.create_reader_id_from_reader(&self.id) },
             Err(_) => create_invalid_reader_id::<P::Strategy>(),
         };
 
+        // SAFETY: id is valid for the strategy inside ptr
+        // or the ptr is dead and the reader id is invalid
         unsafe { Self::from_raw_parts(id, self.ptr.clone()) }
     }
 }
@@ -91,6 +103,9 @@ impl<T: ?Sized, P: DoubleBufferWriterPointer> ops::Deref for ReaderGuard<'_, T, 
 
     #[inline]
     fn deref(&self) -> &Self::Target {
+        // SAFETY: self.raw ensures that the writer doesn't have access to self.ptr
+        // so there is no race with the writer, and readers cannot race with each other
+        // self.ptr is NonNull, well aligned, allocated and valid for reads
         unsafe { self.ptr.as_ref() }
     }
 }

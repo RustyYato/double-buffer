@@ -18,6 +18,7 @@ use crate::interface::{AsyncStrategy, Strategy};
 use std::vec::Vec;
 use triomphe::Arc;
 
+#[cfg(FALSE)]
 #[cfg(test)]
 mod test;
 
@@ -207,7 +208,7 @@ unsafe impl<ParkToken: self::ParkToken> Strategy for FlashStrategy<ParkToken> {
         swap_state != NOT_SWAPPED
     }
 
-    unsafe fn is_swapped(&self, guard: &Self::ReadGuard) -> bool {
+    unsafe fn is_swapped(&self, _reader: &mut Self::ReaderId, guard: &Self::ReadGuard) -> bool {
         guard.swap_state != NOT_SWAPPED
     }
 

@@ -138,9 +138,9 @@ pub unsafe trait Strategy {
     ///
     /// # Safety
     ///
-    /// The reader guard must have been created from a valid reader id
-    /// and that reader id must still be valid
-    unsafe fn is_swapped(&self, guard: &Self::ReadGuard) -> bool;
+    /// * The reader id is valid
+    /// * The reader guard must have been created from the given reader id
+    unsafe fn is_swapped(&self, reader: &mut Self::ReaderId, guard: &Self::ReadGuard) -> bool;
 
     // swap handlers
 
@@ -149,6 +149,9 @@ pub unsafe trait Strategy {
     /// If the buffers can be swapped without issues, then they will be swapped
     /// and this function will return Ok
     /// otherwise this function will return Err (and the buffers will not be swapped)
+    ///
+    /// NOTE: for implementors, it is safe to call try_start_swap as many times as the
+    /// user wants, and only the last swap matters.
     ///
     /// # Safety
     ///
@@ -183,6 +186,10 @@ pub unsafe trait Strategy {
 
     /// Acquires a read guard. This ensures that the writer does not have write access to the
     /// current buffer while the read guard is active
+    ///
+    /// NOTE: it is incorrect, but not *unsafe* to call [`acquire_read_guard`] while there is
+    /// an unreleased [`Self::ReadGuard`]. This can result in a panic, infinite loop, or any other
+    /// strange but safe behavior.
     ///
     /// # Safety
     ///
