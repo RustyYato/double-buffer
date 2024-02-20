@@ -29,4 +29,5 @@ pub mod interface;
 mod ext;
 pub mod strategy;
 
+pub mod delay;
 pub mod raw;
