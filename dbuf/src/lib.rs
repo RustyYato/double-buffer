@@ -9,7 +9,8 @@
     clippy::branches_sharing_code,
     clippy::bad_bit_mask,
     clippy::std_instead_of_core,
-    clippy::alloc_instead_of_core
+    clippy::alloc_instead_of_core,
+    clippy::std_instead_of_alloc
 )]
 #![cfg_attr(
     not(test),
@@ -30,4 +31,6 @@ mod ext;
 pub mod strategy;
 
 pub mod delay;
+#[cfg(feature = "alloc")]
+pub mod op;
 pub mod raw;
