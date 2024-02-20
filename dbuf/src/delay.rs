@@ -13,6 +13,13 @@ pub struct DelayWriter<
     swap: Option<S::Swap>,
 }
 
+impl<P: DoubleBufferWriterPointer> From<raw::Writer<P>> for DelayWriter<P> {
+    #[inline]
+    fn from(value: raw::Writer<P>) -> Self {
+        Self::from_writer(value)
+    }
+}
+
 impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
     pub const fn from_writer(writer: raw::Writer<P>) -> Self {
         Self { writer, swap: None }

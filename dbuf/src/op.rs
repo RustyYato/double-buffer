@@ -3,6 +3,7 @@
 use crate::{
     delay::DelayWriter,
     interface::{DoubleBufferWriterPointer, Strategy},
+    raw,
 };
 
 use alloc::vec::Vec;
@@ -25,6 +26,22 @@ pub trait Operation<T: ?Sized>: Sized {
     }
 }
 
+impl<P: DoubleBufferWriterPointer, O: Operation<P::Buffer>> From<raw::Writer<P>>
+    for OpWriter<P, O>
+{
+    fn from(writer: raw::Writer<P>) -> Self {
+        Self::from_writer(writer.into())
+    }
+}
+
+impl<P: DoubleBufferWriterPointer, O: Operation<P::Buffer>> From<DelayWriter<P>>
+    for OpWriter<P, O>
+{
+    fn from(writer: DelayWriter<P>) -> Self {
+        Self::from_writer(writer)
+    }
+}
+
 impl<P: DoubleBufferWriterPointer, O: Operation<P::Buffer>> OpWriter<P, O> {
     pub fn from_writer(writer: DelayWriter<P>) -> Self {
         Self {
@@ -42,7 +59,8 @@ impl<P: DoubleBufferWriterPointer, O: Operation<P::Buffer>> OpWriter<P, O> {
 
         let buffer = writer.get_mut();
 
-        for op in self.op_log.drain(..self.water_line) {
+        let water_line = core::mem::take(&mut self.water_line);
+        for op in self.op_log.drain(..water_line) {
             op.apply_once(buffer);
         }
 

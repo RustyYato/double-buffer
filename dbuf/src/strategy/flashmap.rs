@@ -18,7 +18,6 @@ use crate::interface::{AsyncStrategy, Strategy};
 use alloc::vec::Vec;
 use triomphe::Arc;
 
-#[cfg(FALSE)]
 #[cfg(test)]
 mod test;
 
