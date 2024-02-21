@@ -7,7 +7,7 @@ edition = "2021"
 
 default = ["std", "triomphe"]
 
-std = ["alloc"]
+std = ["alloc", "dep:atomic-waker"]
 alloc = ["dep:rc-box"]
 triomphe = ["dep:triomphe"]
 
@@ -26,6 +26,7 @@ default-features = false
 [dependencies.atomic-waker]
 version = "1"
 default-features = false
+optional = true
 
 [dev-dependencies.pollster]
 version = "0.3"
