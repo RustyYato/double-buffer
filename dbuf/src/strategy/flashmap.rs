@@ -73,8 +73,20 @@ impl FlashStrategy<ThreadParkToken> {
     }
 }
 
+impl FlashStrategy<AsyncParkToken> {
+    pub const fn new_async() -> Self {
+        Self::with_park_token()
+    }
+}
+
+impl FlashStrategy<AdaptiveStrategy> {
+    pub const fn new_adaptive() -> Self {
+        Self::with_park_token()
+    }
+}
+
 impl<ParkToken: self::Parker> FlashStrategy<ParkToken> {
-    pub const fn with_park_token() -> Self {
+    const fn with_park_token() -> Self {
         Self {
             swap_state: AtomicUsize::new(NOT_SWAPPED),
             readers: Mutex::new(Vec::new()),

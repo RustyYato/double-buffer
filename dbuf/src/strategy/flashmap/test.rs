@@ -57,7 +57,7 @@ fn test_double_swap() {
 
 #[async_test]
 async fn test_async() {
-    let mut state = DoubleBufferData::new(0, 1, FlashStrategy::<AsyncParkToken>::with_park_token());
+    let mut state = DoubleBufferData::new(0, 1, FlashStrategy::new_async());
     let mut writer = Writer::new(&mut state);
 
     let mut reader = writer.reader();
