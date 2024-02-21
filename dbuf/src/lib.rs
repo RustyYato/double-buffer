@@ -40,3 +40,6 @@ pub mod delay;
 #[cfg(feature = "alloc")]
 pub mod op;
 pub mod raw;
+
+#[doc(hidden)]
+pub mod macros;
