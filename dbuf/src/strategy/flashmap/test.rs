@@ -2,7 +2,11 @@
 
 use super::FlashStrategy;
 
-use crate::raw::{DoubleBufferData, Writer};
+use crate::{
+    delay::DelayWriter,
+    raw::{DoubleBufferData, Writer},
+    strategy::flashmap::AsyncParkToken,
+};
 
 use pollster::test as async_test;
 
@@ -16,16 +20,20 @@ fn smoke() {
     let x = reader.read();
     assert_eq!(*x, *writer.split().read);
 
+    // SAFETY: afinish_swap is polled to completion before split_mut/get_mut is called
     let mut swap = unsafe { writer.try_start_swap().unwrap() };
 
+    // SAFETY: the swap is the latest swap
     assert!(!unsafe { writer.is_swap_finished(&mut swap) });
 
     assert_eq!(*x, *writer.split().write);
 
     drop(x);
 
+    // SAFETY: the swap is the latest swap
     assert!(unsafe { writer.is_swap_finished(&mut swap) });
 
+    // SAFETY: the swap is the latest swap
     unsafe { writer.finish_swap(swap) }
 }
 
@@ -39,6 +47,7 @@ fn test_double_swap() {
     let x = reader.read();
     assert_eq!(*x, *writer.split().read);
 
+    // SAFETY: swap is called, which ensures that finish_swap is called
     unsafe { writer.try_start_swap().unwrap() };
     assert_eq!(*x, *writer.split().write);
     writer.swap();
@@ -48,7 +57,7 @@ fn test_double_swap() {
 
 #[async_test]
 async fn test_async() {
-    let mut state = DoubleBufferData::new(0, 1, FlashStrategy::with_park_token());
+    let mut state = DoubleBufferData::new(0, 1, FlashStrategy::<AsyncParkToken>::with_park_token());
     let mut writer = Writer::new(&mut state);
 
     let mut reader = writer.reader();
@@ -56,9 +65,15 @@ async fn test_async() {
     let x = reader.read();
     assert_eq!(*x, *writer.split().read);
 
+    // SAFETY: afinish_swap is polled to completion before split_mut/get_mut is called
     unsafe { writer.try_start_swap().unwrap() };
     assert_eq!(*x, *writer.split().write);
-    writer.aswap().await;
+    // SAFETY: afinish_swap is polled to completion before split_mut/get_mut is called
+    // the swap passed to afinish_swap is the latest swap
+    unsafe {
+        let swap = writer.try_start_swap().unwrap();
+        writer.afinish_swap(swap).await;
+    }
 
     assert_eq!(*x, *writer.split().read);
 }

@@ -1,4 +1,5 @@
 use core::fmt::Debug;
+use core::ops;
 
 use crate::{
     interface::{AsyncStrategy, BlockingStrategy, DoubleBufferWriterPointer, Strategy, SwapError},
@@ -96,5 +97,20 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
     {
         self.afinish_swap().await;
         self.writer
+    }
+
+    pub fn get_writer_mut(&mut self) -> Option<&mut raw::Writer<P>> {
+        match self.swap {
+            Some(_) => None,
+            None => Some(&mut self.writer),
+        }
+    }
+}
+
+impl<P: DoubleBufferWriterPointer> ops::Deref for DelayWriter<P> {
+    type Target = raw::Writer<P>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.writer
     }
 }

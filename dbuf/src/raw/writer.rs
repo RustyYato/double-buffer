@@ -120,7 +120,9 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
     /// # Safety
     ///
-    /// try_aswap must be polled to completion before you can call split_mut or get_mut
+    /// finish_swap must be called or afinish_swap must be polled to completion
+    /// before you can call split_mut or get_mut
+    ///
     /// # Safety
     ///
     /// there should be no calls to split_mut or get_mut until finish_swap is called or afinish_swap is
