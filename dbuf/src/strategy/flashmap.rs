@@ -295,7 +295,9 @@ impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
         ctx: &mut core::task::Context<'_>,
     ) -> Poll<()> {
         if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
-            self.residual.fetch_add(swap.residual, Ordering::Release);
+            if swap.residual != 0 {
+                self.residual.fetch_add(swap.residual, Ordering::Release);
+            }
             return Poll::Ready(());
         }
 
