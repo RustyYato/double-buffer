@@ -14,7 +14,12 @@
 )]
 #![cfg_attr(
     not(test),
-    forbid(clippy::print_stderr, clippy::print_stdout, clippy::todo)
+    forbid(
+        clippy::print_stderr,
+        clippy::print_stdout,
+        clippy::todo,
+        clippy::dbg_macro
+    )
 )]
 #![deny(clippy::perf, clippy::arithmetic_side_effects, unused_unsafe)]
 #![allow(clippy::declare_interior_mutable_const)]

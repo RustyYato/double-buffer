@@ -263,8 +263,6 @@ unsafe impl<ParkToken: self::Parker> Strategy for FlashStrategy<ParkToken> {
             reader.id.fetch_xor(READER_ACTIVE, Ordering::Release) ^ READER_ACTIVE;
         let swap_state = self.swap_state.load(Ordering::Acquire);
 
-        dbg!(swap_state, reader_swap_state);
-
         // if there wasn't any intervening swap then just return
         if swap_state == reader_swap_state {
             return;
