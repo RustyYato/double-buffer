@@ -23,6 +23,10 @@ mod test;
 
 pub struct ThreadParkToken(Cell<Option<Thread>>);
 pub struct AsyncParkToken(atomic_waker::AtomicWaker);
+pub struct AdaptiveStrategy {
+    thread_token: ThreadParkToken,
+    async_token: AsyncParkToken,
+}
 
 pub struct FlashStrategy<ParkToken> {
     swap_state: AtomicUsize,
@@ -133,6 +137,25 @@ unsafe impl Parker for AsyncParkToken {
     #[doc(hidden)]
     unsafe fn wake(&self) {
         self.0.wake()
+    }
+}
+
+impl seal::Seal for AdaptiveStrategy {}
+// # SAFETY: thread::park doesn not unwind
+unsafe impl Parker for AdaptiveStrategy {
+    #[doc(hidden)]
+    const NEW: Self = AdaptiveStrategy {
+        thread_token: ThreadParkToken::NEW,
+        async_token: AsyncParkToken::NEW,
+    };
+
+    #[doc(hidden)]
+    unsafe fn wake(&self) {
+        // SAFETY: ensured by caller
+        unsafe {
+            self.thread_token.wake();
+            self.async_token.wake();
+        }
     }
 }
 
@@ -293,6 +316,76 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
         swap: &mut Self::Swap,
         ctx: &mut core::task::Context<'_>,
     ) -> Poll<()> {
+        self.poll(swap, |should_set| {
+            if should_set {
+                self.parker.0.register(ctx.waker())
+            } else {
+                self.parker.0.take();
+            }
+        })
+    }
+}
+
+// SAFETY: we check if is_swap_finished would return true before returning
+unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
+    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
+        if self
+            .poll(&mut swap, |should_set| {
+                if should_set {
+                    self.parker.0.set(Some(std::thread::current()))
+                } else {
+                    self.parker.0.set(None);
+                }
+            })
+            .is_pending()
+        {
+            while self.residual.load(Ordering::Relaxed) != 0 {
+                std::thread::park();
+            }
+        }
+    }
+}
+
+// SAFETY: we check if is_swap_finished would return true before returning Poll::Ready
+unsafe impl AsyncStrategy for FlashStrategy<AdaptiveStrategy> {
+    unsafe fn register_context(
+        &self,
+        _writer: &mut Self::WriterId,
+        swap: &mut Self::Swap,
+        ctx: &mut core::task::Context<'_>,
+    ) -> Poll<()> {
+        self.poll(swap, |should_set| {
+            if should_set {
+                self.parker.async_token.0.register(ctx.waker())
+            } else {
+                self.parker.async_token.0.take();
+            }
+        })
+    }
+}
+
+// SAFETY: we check if is_swap_finished would return true before returning
+unsafe impl BlockingStrategy for FlashStrategy<AdaptiveStrategy> {
+    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
+        if self
+            .poll(&mut swap, |should_set| {
+                if should_set {
+                    self.parker.thread_token.0.set(Some(std::thread::current()))
+                } else {
+                    self.parker.thread_token.0.set(None);
+                }
+            })
+            .is_pending()
+        {
+            while self.residual.load(Ordering::Relaxed) != 0 {
+                std::thread::park();
+            }
+        }
+    }
+}
+
+impl<T> FlashStrategy<T> {
+    fn poll(&self, swap: &mut Swap, mut setup: impl FnMut(bool)) -> Poll<()> {
         if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
             if swap.residual != 0 {
                 self.residual.fetch_add(swap.residual, Ordering::Release);
@@ -302,38 +395,14 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
 
         let expected_residual = swap.expected_residual();
         let residual = core::mem::take(&mut swap.residual);
-        self.parker.0.register(ctx.waker());
+        setup(true);
         let residual = self.residual.fetch_add(residual, Ordering::Release);
         // if all residual readers finished already
         if residual == expected_residual {
-            self.parker.0.take();
+            setup(false);
             return Poll::Ready(());
         }
 
         Poll::Pending
-    }
-}
-
-// SAFETY: we check if is_swap_finished would return true before returning
-unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
-    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, swap: Self::Swap) {
-        if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
-            self.residual.fetch_add(swap.residual, Ordering::Release);
-            return;
-        }
-
-        let current = std::thread::current();
-        self.parker.0.set(Some(current));
-        let residual = self.residual.fetch_add(swap.residual, Ordering::Release);
-
-        // if all residual readers finished already
-        if residual == swap.expected_residual() {
-            self.parker.0.set(None);
-            return;
-        }
-
-        while self.residual.load(Ordering::Relaxed) != 0 {
-            std::thread::park();
-        }
     }
 }
