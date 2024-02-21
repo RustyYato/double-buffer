@@ -285,7 +285,8 @@ unsafe impl<ParkToken: self::Parker> Strategy for FlashStrategy<ParkToken> {
     }
 }
 
-impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
+// SAFETY: we check if is_swap_finished would return true before returning Poll::Ready
+unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
     unsafe fn register_context(
         &self,
         _writer: &mut Self::WriterId,
@@ -313,7 +314,8 @@ impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
     }
 }
 
-impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
+// SAFETY: we check if is_swap_finished would return true before returning
+unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, swap: Self::Swap) {
         if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
             self.residual.fetch_add(swap.residual, Ordering::Release);

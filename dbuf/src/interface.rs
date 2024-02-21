@@ -193,7 +193,12 @@ pub unsafe trait Strategy {
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, guard: Self::ReadGuard);
 }
 
-pub trait AsyncStrategy: Strategy {
+/// Registers a context that will be woken up once the last reader has released their guard
+///
+/// # Safety
+///
+/// If register_context returns Poll::Ready, then is_swap_finished must return true
+pub unsafe trait AsyncStrategy: Strategy {
     /// registers a async context to an ongoing swap
     ///
     /// # Safety
@@ -201,6 +206,7 @@ pub trait AsyncStrategy: Strategy {
     /// the writer id must be valid
     /// the swap must have been created by this strategy and this writer id
     /// this must be the latest swap created by this strategy and writer id
+    /// all panics must be converted to aborts
     unsafe fn register_context(
         &self,
         writer: &mut Self::WriterId,
@@ -209,7 +215,12 @@ pub trait AsyncStrategy: Strategy {
     ) -> core::task::Poll<()>;
 }
 
-pub trait BlockingStrategy: Strategy {
+/// Registers a context that will be woken up once the last reader has released their guard
+///
+/// # Safety
+///
+/// If finish_swap returns, then is_swap_finished must return true
+pub unsafe trait BlockingStrategy: Strategy {
     /// Waits until the latest swap is finished
     ///
     /// If is_swap_finished returned true before this is called (with the same arguments)
@@ -220,6 +231,7 @@ pub trait BlockingStrategy: Strategy {
     /// the writer id must be valid
     /// the swap must have been created by this strategy and this writer id
     /// this must be the latest swap created by this strategy and writer id
+    /// all panics must be converted to aborts
     unsafe fn finish_swap(&self, writer: &mut Self::WriterId, swap: Self::Swap);
 }
 

@@ -102,7 +102,8 @@ unsafe impl Strategy for SimpleStrategy {
     }
 }
 
-impl AsyncStrategy for SimpleStrategy {
+// SAFETY: is_swap_finished always returns true
+unsafe impl AsyncStrategy for SimpleStrategy {
     #[inline]
     unsafe fn register_context(
         &self,
@@ -114,7 +115,8 @@ impl AsyncStrategy for SimpleStrategy {
     }
 }
 
-impl BlockingStrategy for SimpleStrategy {
+// SAFETY: is_swap_finished always returns true
+unsafe impl BlockingStrategy for SimpleStrategy {
     #[inline]
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, _swap: Self::Swap) {}
 }

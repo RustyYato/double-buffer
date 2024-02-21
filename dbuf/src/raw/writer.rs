@@ -149,14 +149,6 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     where
         P::Strategy: BlockingStrategy,
     {
-        struct NoUnwind;
-
-        impl Drop for NoUnwind {
-            fn drop(&mut self) {
-                panic!("detected unwind while finishing a swap, this is a critical bug which cannot be recovered from")
-            }
-        }
-
         let no_unwind = NoUnwind;
 
         // SAFETY: guaranteed by caller
@@ -215,11 +207,23 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
             }
         }
 
+        let no_unwind = NoUnwind;
+
         WaitForSwap {
             strategy: &self.ptr.strategy,
             swap: &mut swap,
             id: &mut self.id,
         }
         .await;
+
+        core::mem::forget(no_unwind);
+    }
+}
+
+struct NoUnwind;
+
+impl Drop for NoUnwind {
+    fn drop(&mut self) {
+        panic!("detected unwind while finishing a swap, this is a critical bug which cannot be recovered from")
     }
 }

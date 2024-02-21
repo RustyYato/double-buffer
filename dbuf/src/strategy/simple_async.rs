@@ -104,7 +104,8 @@ unsafe impl Strategy for SimpleAsyncStrategy {
     }
 }
 
-impl AsyncStrategy for SimpleAsyncStrategy {
+// SAFETY: register_context never returns Poll::Ready
+unsafe impl AsyncStrategy for SimpleAsyncStrategy {
     #[inline]
     unsafe fn register_context(
         &self,
