@@ -1,6 +1,6 @@
 use crate::interface::{
-    self as iface, AsyncStrategy, DoubleBufferWriterPointer, IntoDoubleBufferWriterPointer,
-    Strategy, WriterId,
+    self as iface, AsyncStrategy, BlockingStrategy, DoubleBufferWriterPointer,
+    IntoDoubleBufferWriterPointer, Strategy, WriterId,
 };
 
 use super::{reader::Reader, Split, SplitMut};
@@ -90,7 +90,10 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         }
     }
 
-    pub fn try_swap(&mut self) -> Result<(), iface::SwapError<P::Strategy>> {
+    pub fn try_swap(&mut self) -> Result<(), iface::SwapError<P::Strategy>>
+    where
+        P::Strategy: BlockingStrategy,
+    {
         // SAFETY: there are no calls to split_mut or get_mut in this function
         // and we immediately call finish_swap, which cannot unwind, so there are no
         // code paths, inclduing panic code paths which can lead to a call to split_mut
@@ -103,6 +106,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
     pub fn swap(&mut self)
     where
+        P::Strategy: BlockingStrategy,
         iface::SwapError<P::Strategy>: core::fmt::Debug,
     {
         fn swap_failed<E: core::fmt::Debug>(err: E) -> ! {
@@ -139,7 +143,10 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// # Safety
     ///
     /// this swap should be the latest one created from try_start_swap
-    pub unsafe fn finish_swap(&mut self, swap: iface::Swap<P::Strategy>) {
+    pub unsafe fn finish_swap(&mut self, swap: iface::Swap<P::Strategy>)
+    where
+        P::Strategy: BlockingStrategy,
+    {
         struct NoUnwind;
 
         impl Drop for NoUnwind {
@@ -160,13 +167,13 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// # Safety
     ///
     /// this swap should be the latest one created from try_start_swap
-    pub async unsafe fn afinish_swap(&mut self, swap: iface::Swap<P::Strategy>)
+    pub async unsafe fn afinish_swap(&mut self, mut swap: iface::Swap<P::Strategy>)
     where
         P::Strategy: AsyncStrategy,
     {
         struct WaitForSwap<'a, S: AsyncStrategy> {
             strategy: &'a S,
-            swap: Option<S::Swap>,
+            swap: &'a mut S::Swap,
             id: &'a mut S::WriterId,
         }
 
@@ -178,7 +185,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
                 cx: &mut core::task::Context<'_>,
             ) -> core::task::Poll<Self::Output> {
                 // SAFETY: a pin on Self does not pin any of it's fields
-                let this = unsafe { core::pin::Pin::into_inner_unchecked(self) };
+                let this = core::pin::Pin::into_inner(self);
                 // SAFETY: the id can from a Writer and the swap is the latest swap
                 // and while this future is alive, no one else can create a new swap
                 // because we have exclusive access to the writer
@@ -186,14 +193,10 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
                 // the strategy should be able to handle multiple calls to
                 // try_start_swap before any call to finish_swap
                 unsafe {
-                    let swap = this.swap.as_mut().unwrap();
-                    if this.strategy.is_swap_finished(this.id, swap) {
-                        let swap = this.swap.take().unwrap();
-                        this.strategy.finish_swap(this.id, swap);
+                    if this.strategy.is_swap_finished(this.id, this.swap) {
                         core::task::Poll::Ready(())
                     } else {
-                        this.strategy.register_context(this.id, swap, cx);
-                        core::task::Poll::Pending
+                        this.strategy.register_context(this.id, this.swap, cx)
                     }
                 }
             }
@@ -201,16 +204,18 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
         impl<S: AsyncStrategy> Drop for WaitForSwap<'_, S> {
             fn drop(&mut self) {
-                if let Some(swap) = self.swap.take() {
-                    // SAFETY: see safety doc in future implementaion
-                    unsafe { self.strategy.finish_swap(self.id, swap) }
+                // SAFETY: this self.id is valid and swap was created from this id
+                unsafe {
+                    while !self.strategy.is_swap_finished(self.id, self.swap) {
+                        core::hint::spin_loop()
+                    }
                 }
             }
         }
 
         WaitForSwap {
             strategy: &self.ptr.strategy,
-            swap: Some(swap),
+            swap: &mut swap,
             id: &mut self.id,
         }
         .await;

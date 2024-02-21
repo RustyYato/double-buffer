@@ -23,6 +23,11 @@ optional = true
 version = "0.1.11"
 default-features = false
 
+[dependencies.atomic-waker]
+version = "1"
+default-features = false
+
 [dev-dependencies.pollster]
 version = "0.3"
 features = ["macro"]
+

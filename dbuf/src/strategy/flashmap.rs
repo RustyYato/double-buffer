@@ -6,14 +6,14 @@ use core::{
     cell::Cell,
     mem::MaybeUninit,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
-    task::Waker,
+    task::Poll,
 };
 use std::{
     sync::{Mutex, Once, PoisonError},
     thread::Thread,
 };
 
-use crate::interface::{AsyncStrategy, Strategy};
+use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
 
 use alloc::vec::Vec;
 use triomphe::Arc;
@@ -21,19 +21,22 @@ use triomphe::Arc;
 #[cfg(test)]
 mod test;
 
-pub struct ThreadParkToken(Thread);
-pub struct AsyncParkToken(Waker);
+pub struct ThreadParkToken(Cell<Option<Thread>>);
+pub struct AsyncParkToken(atomic_waker::AtomicWaker);
 
 pub struct FlashStrategy<ParkToken> {
     swap_state: AtomicUsize,
     readers: Mutex<Vec<Arc<AtomicUsize>>>,
     residual: AtomicIsize,
-    park_token: Cell<Option<ParkToken>>,
+    parker: ParkToken,
 }
 
-// SAFETY: FlashStrategy doesn't use shared ownership, or thread-locals
-// so it is trivially Send if the ParkToken is Send
-unsafe impl<ParkToken: Send> Send for FlashStrategy<ParkToken> {}
+const _: () = {
+    const fn send_sync<T: Send + Sync>() {}
+
+    let _ = send_sync::<FlashStrategy<ThreadParkToken>>;
+    let _ = send_sync::<FlashStrategy<AsyncParkToken>>;
+};
 
 // SAFETY: FlashStrategy ensures that all access to the park token
 // by the writer only happens when the residual is negative
@@ -41,8 +44,7 @@ unsafe impl<ParkToken: Send> Send for FlashStrategy<ParkToken> {}
 //
 // These two states are mutually disjoint, so they cannot race
 // All other parts of the FlashStrategy are trivially thread-safe
-//
-unsafe impl<ParkToken: Send> Sync for FlashStrategy<ParkToken> {}
+unsafe impl Sync for ThreadParkToken {}
 
 const NOT_SWAPPED: usize = 0;
 const SWAPPED: usize = 1;
@@ -57,9 +59,8 @@ pub struct ReadGuard {
     swap_state: usize,
 }
 
-pub struct Swap<Store> {
+pub struct Swap {
     residual: isize,
-    storage: Store,
 }
 
 impl FlashStrategy<ThreadParkToken> {
@@ -68,13 +69,13 @@ impl FlashStrategy<ThreadParkToken> {
     }
 }
 
-impl<ParkToken> FlashStrategy<ParkToken> {
+impl<ParkToken: self::Parker> FlashStrategy<ParkToken> {
     pub const fn with_park_token() -> Self {
         Self {
             swap_state: AtomicUsize::new(NOT_SWAPPED),
             readers: Mutex::new(Vec::new()),
             residual: AtomicIsize::new(0),
-            park_token: Cell::new(None),
+            parker: ParkToken::NEW,
         }
     }
 }
@@ -88,56 +89,54 @@ impl<ParkToken> FlashStrategy<ParkToken> {
     }
 }
 
+mod seal {
+    pub trait Seal {}
+}
+
+/// This is an internal trait, do not use it directly.
+///
+/// It only exists as an implementation detail to abstract over ThreadParkToken and AsyncParkToken
+///
+/// This trait is sealed, so you cannot implement this trait.
+///
 /// # Safety
 ///
 /// ParkToken::wait must not unwind
-pub unsafe trait ParkToken: Sized {
-    type SwapStorage: Default;
+pub unsafe trait Parker: Sized + seal::Seal {
+    #[doc(hidden)]
+    const NEW: Self;
 
-    fn new(swap: &mut Swap<Self::SwapStorage>) -> Option<Self>;
-
-    fn wake(self);
-
-    fn wait();
+    #[doc(hidden)]
+    unsafe fn wake(&self);
 }
 
+impl seal::Seal for ThreadParkToken {}
 // # SAFETY: thread::park doesn not unwind
-unsafe impl ParkToken for ThreadParkToken {
-    type SwapStorage = ();
+unsafe impl Parker for ThreadParkToken {
+    #[doc(hidden)]
+    const NEW: Self = ThreadParkToken(Cell::new(None));
 
-    fn new(_writer: &mut Swap<Self::SwapStorage>) -> Option<Self> {
-        Some(Self(std::thread::current()))
-    }
-
-    fn wake(self) {
-        self.0.unpark()
-    }
-
-    fn wait() {
-        std::thread::park()
-    }
-}
-
-// # SAFETY: thread::park doesn not unwind
-unsafe impl ParkToken for AsyncParkToken {
-    type SwapStorage = Option<Waker>;
-
-    fn new(swap: &mut Swap<Self::SwapStorage>) -> Option<Self> {
-        swap.storage.take().map(Self)
-    }
-
-    fn wake(self) {
-        self.0.wake()
-    }
-
-    fn wait() {
-        loop {
-            std::thread::park()
+    #[doc(hidden)]
+    unsafe fn wake(&self) {
+        if let Some(thread) = self.0.take() {
+            thread.unpark()
         }
     }
 }
 
-impl<T> Swap<T> {
+impl seal::Seal for AsyncParkToken {}
+// # SAFETY: thread::park doesn not unwind
+unsafe impl Parker for AsyncParkToken {
+    #[doc(hidden)]
+    const NEW: Self = AsyncParkToken(atomic_waker::AtomicWaker::new());
+
+    #[doc(hidden)]
+    unsafe fn wake(&self) {
+        self.0.wake()
+    }
+}
+
+impl Swap {
     // This negation cannot overflow because swap.residual is always positive
     // and -isize::MAX does not overflow
     #[inline]
@@ -151,11 +150,11 @@ impl<T> Swap<T> {
 // because finish_swap doesn't return while there are any readers in the
 // buffer that the writer (even if the readers are on other threads). see the module
 // docs for more information on the particular algorithm.
-unsafe impl<ParkToken: self::ParkToken> Strategy for FlashStrategy<ParkToken> {
+unsafe impl<ParkToken: self::Parker> Strategy for FlashStrategy<ParkToken> {
     type WriterId = WriterId;
     type ReaderId = ReaderId;
 
-    type Swap = Swap<ParkToken::SwapStorage>;
+    type Swap = Swap;
     type SwapError = core::convert::Infallible;
 
     type ReadGuard = ReadGuard;
@@ -240,34 +239,11 @@ unsafe impl<ParkToken: self::ParkToken> Strategy for FlashStrategy<ParkToken> {
             true
         });
 
-        Ok(Swap {
-            residual,
-            storage: Default::default(),
-        })
+        Ok(Swap { residual })
     }
 
     unsafe fn is_swap_finished(&self, _writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool {
         self.residual.load(Ordering::Acquire) == swap.expected_residual()
-    }
-
-    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
-        if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
-            self.residual.fetch_add(swap.residual, Ordering::Release);
-            return;
-        }
-
-        let current = ParkToken::new(&mut swap);
-        self.park_token.set(current);
-        let residual = self.residual.fetch_add(swap.residual, Ordering::Release);
-
-        // if all residual readers finished already
-        if residual == swap.expected_residual() {
-            self.park_token.set(None);
-            return;
-        }
-
-        // FIXME: this may spuriously exit, and we should check if residual is zero before exiting
-        ParkToken::wait()
     }
 
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard {
@@ -306,9 +282,8 @@ unsafe impl<ParkToken: self::ParkToken> Strategy for FlashStrategy<ParkToken> {
 
         // if this is the last residual reader, then wake up the writer
 
-        if let Some(token) = self.park_token.take() {
-            token.wake();
-        }
+        // SAFETY: residual is non-zero
+        unsafe { self.parker.wake() }
     }
 }
 
@@ -318,7 +293,44 @@ impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
         _writer: &mut Self::WriterId,
         swap: &mut Self::Swap,
         ctx: &mut core::task::Context<'_>,
-    ) {
-        swap.storage = Some(ctx.waker().clone());
+    ) -> Poll<()> {
+        if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
+            self.residual.fetch_add(swap.residual, Ordering::Release);
+            return Poll::Ready(());
+        }
+
+        let expected_residual = swap.expected_residual();
+        let residual = core::mem::take(&mut swap.residual);
+        self.parker.0.register(ctx.waker());
+        let residual = self.residual.fetch_add(residual, Ordering::Release);
+        // if all residual readers finished already
+        if residual == expected_residual {
+            self.parker.0.take();
+            return Poll::Ready(());
+        }
+
+        Poll::Pending
+    }
+}
+
+impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
+    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, swap: Self::Swap) {
+        if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
+            self.residual.fetch_add(swap.residual, Ordering::Release);
+            return;
+        }
+
+        let current = std::thread::current();
+        self.parker.0.set(Some(current));
+        let residual = self.residual.fetch_add(swap.residual, Ordering::Release);
+
+        // if all residual readers finished already
+        if residual == swap.expected_residual() {
+            self.parker.0.set(None);
+            return;
+        }
+
+        // FIXME: this may spuriously exit, and we should check if residual is zero before exiting
+        std::thread::park();
     }
 }

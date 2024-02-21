@@ -17,6 +17,7 @@
     forbid(clippy::print_stderr, clippy::print_stdout, clippy::todo)
 )]
 #![deny(clippy::perf, clippy::arithmetic_side_effects, unused_unsafe)]
+#![allow(clippy::declare_interior_mutable_const)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

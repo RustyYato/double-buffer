@@ -2,7 +2,7 @@
 
 use crate::{
     delay::DelayWriter,
-    interface::{DoubleBufferWriterPointer, Strategy},
+    interface::{AsyncStrategy, BlockingStrategy, DoubleBufferWriterPointer, Strategy},
     raw,
 };
 
@@ -53,22 +53,29 @@ impl<P: DoubleBufferWriterPointer, O: Operation<P::Buffer>> OpWriter<P, O> {
 
     pub fn swap_buffers(&mut self)
     where
-        P::Strategy: Strategy<SwapError = core::convert::Infallible>,
+        P::Strategy: BlockingStrategy + Strategy<SwapError = core::convert::Infallible>,
     {
         let writer = self.writer.finish_swap();
+        swap_buffers(
+            writer,
+            &mut self.op_log,
+            core::mem::take(&mut self.water_line),
+        );
+        self.writer.start_swap();
+    }
 
-        let buffer = writer.get_mut();
+    pub async fn aswap_buffers(&mut self)
+    where
+        P::Strategy: AsyncStrategy + Strategy<SwapError = core::convert::Infallible>,
+    {
+        let writer = self.writer.afinish_swap().await;
 
-        let water_line = core::mem::take(&mut self.water_line);
-        for op in self.op_log.drain(..water_line) {
-            op.apply_once(buffer);
-        }
-
-        for op in self.op_log.iter_mut() {
-            op.apply(buffer);
-        }
-
-        self.writer.start_swap()
+        swap_buffers(
+            writer,
+            &mut self.op_log,
+            core::mem::take(&mut self.water_line),
+        );
+        self.writer.start_swap();
     }
 
     #[inline]
@@ -86,5 +93,23 @@ impl<P: DoubleBufferWriterPointer, O: Operation<P::Buffer>> Extend<O> for OpWrit
     #[inline]
     fn extend<T: IntoIterator<Item = O>>(&mut self, iter: T) {
         self.op_log.extend(iter)
+    }
+}
+
+fn swap_buffers<P: DoubleBufferWriterPointer, O: Operation<P::Buffer>>(
+    writer: &mut raw::Writer<P>,
+    op_log: &mut Vec<O>,
+    water_line: usize,
+) where
+    P::Strategy: Strategy<SwapError = core::convert::Infallible>,
+{
+    let buffer = writer.get_mut();
+
+    for op in op_log.drain(..water_line) {
+        op.apply_once(buffer);
+    }
+
+    for op in op_log.iter_mut() {
+        op.apply(buffer);
     }
 }

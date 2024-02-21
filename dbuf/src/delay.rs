@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 
 use crate::{
-    interface::{AsyncStrategy, DoubleBufferWriterPointer, Strategy, SwapError},
+    interface::{AsyncStrategy, BlockingStrategy, DoubleBufferWriterPointer, Strategy, SwapError},
     raw,
 };
 
@@ -42,7 +42,10 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         self.try_start_swap().expect("start stop must not fail")
     }
 
-    pub fn finish_swap(&mut self) -> &mut raw::Writer<P> {
+    pub fn finish_swap(&mut self) -> &mut raw::Writer<P>
+    where
+        P::Strategy: BlockingStrategy,
+    {
         if let Some(swap) = self.swap.take() {
             // SAFETY: this swap is the latest swap
             unsafe { self.writer.finish_swap(swap) };
@@ -79,7 +82,10 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         }
     }
 
-    pub fn into_writer(mut self) -> raw::Writer<P> {
+    pub fn into_writer(mut self) -> raw::Writer<P>
+    where
+        P::Strategy: BlockingStrategy,
+    {
         self.finish_swap();
         self.writer
     }

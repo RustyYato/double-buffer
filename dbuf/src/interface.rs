@@ -170,18 +170,6 @@ pub unsafe trait Strategy {
     /// this must be the latest swap created by this strategy and writer id
     unsafe fn is_swap_finished(&self, writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool;
 
-    /// Waits until the latest swap is finished
-    ///
-    /// If is_swap_finished returned true before this is called (with the same arguments)
-    /// then this function will return without blocking.
-    ///
-    /// # Safety
-    ///
-    /// the writer id must be valid
-    /// the swap must have been created by this strategy and this writer id
-    /// this must be the latest swap created by this strategy and writer id
-    unsafe fn finish_swap(&self, writer: &mut Self::WriterId, swap: Self::Swap);
-
     // reader registration
 
     /// Acquires a read guard. This ensures that the writer does not have write access to the
@@ -218,7 +206,21 @@ pub trait AsyncStrategy: Strategy {
         writer: &mut Self::WriterId,
         swap: &mut Self::Swap,
         ctx: &mut Context<'_>,
-    );
+    ) -> core::task::Poll<()>;
+}
+
+pub trait BlockingStrategy: Strategy {
+    /// Waits until the latest swap is finished
+    ///
+    /// If is_swap_finished returned true before this is called (with the same arguments)
+    /// then this function will return without blocking.
+    ///
+    /// # Safety
+    ///
+    /// the writer id must be valid
+    /// the swap must have been created by this strategy and this writer id
+    /// this must be the latest swap created by this strategy and writer id
+    unsafe fn finish_swap(&self, writer: &mut Self::WriterId, swap: Self::Swap);
 }
 
 pub(crate) fn create_invalid_reader_id<S: Strategy>() -> S::ReaderId {
