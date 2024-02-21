@@ -332,7 +332,8 @@ impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
             return;
         }
 
-        // FIXME: this may spuriously exit, and we should check if residual is zero before exiting
-        std::thread::park();
+        while self.residual.load(Ordering::Relaxed) != 0 {
+            std::thread::park();
+        }
     }
 }
