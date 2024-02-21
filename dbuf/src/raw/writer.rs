@@ -125,8 +125,8 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     ///
     /// # Safety
     ///
-    /// there should be no calls to split_mut or get_mut until finish_swap is called or afinish_swap is
-    /// called and driven to completion
+    /// there should be no calls to split_mut or get_mut until is_swap_finished returns true,
+    /// finish_swap is called or afinish_swap is driven to completion
     pub unsafe fn try_start_swap(
         &mut self,
     ) -> Result<iface::Swap<P::Strategy>, iface::SwapError<P::Strategy>> {
