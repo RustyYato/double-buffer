@@ -161,7 +161,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// # Safety
     ///
     /// this swap should be the latest one created from try_start_swap
-    pub async unsafe fn afinish_swap(&mut self, mut swap: iface::Swap<P::Strategy>)
+    pub async unsafe fn afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
     where
         P::Strategy: AsyncStrategy,
     {
@@ -211,7 +211,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
         WaitForSwap {
             strategy: &self.ptr.strategy,
-            swap: &mut swap,
+            swap,
             id: &mut self.id,
         }
         .await;

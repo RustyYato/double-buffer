@@ -59,9 +59,14 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
     where
         P::Strategy: AsyncStrategy,
     {
-        if let Some(swap) = self.swap.take() {
+        // we cannot clear the swap now because it's possible that this future
+        // will be cancelled. In which case we should resume this swap the
+        // next time this function is called
+        if let Some(ref mut swap) = self.swap {
             // SAFETY: this swap is the latest swap
             unsafe { self.writer.afinish_swap(swap) }.await;
+            // afinish_swap is driven to completion so now it's safe to clear the swap
+            self.swap = None;
         }
 
         &mut self.writer
