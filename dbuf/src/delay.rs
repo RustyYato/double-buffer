@@ -67,13 +67,23 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         &mut self.writer
     }
 
+    #[inline]
     pub fn is_swap_finished(&mut self) -> bool {
         if let Some(ref mut swap) = self.swap {
             // SAFETY: This is the latest swap
-            unsafe { self.writer.is_swap_finished(swap) }
+            let b = unsafe { self.writer.is_swap_finished(swap) };
+            if b {
+                self.swap = None;
+            }
+            b
         } else {
             true
         }
+    }
+
+    #[inline]
+    pub fn has_swap(&mut self) -> bool {
+        self.swap.is_some()
     }
 
     pub fn try_into_writer(self) -> Result<raw::Writer<P>, Self> {
