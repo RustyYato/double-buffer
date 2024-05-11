@@ -1,4 +1,4 @@
-use core::{cell::UnsafeCell, ops};
+use core::{borrow::Borrow, cell::UnsafeCell};
 
 mod reader;
 mod writer;
@@ -45,26 +45,18 @@ impl<T, S, Extras> DoubleBufferData<T, S, Extras> {
     }
 }
 
-/// A copy of [`alloc::borrow::Cow`] but specialized for just `Clone` types
+/// This is a type that may be owned or borrowed, like a `Cow`, but this
+/// is checked at compile time
 ///
-/// It doesn't have the same extensive api, and is only used to avoid
-/// an atomic increment when reading from the buffer
-pub enum Cow<'a, T> {
-    Borrowed(&'a T),
-    Owned(T),
-}
+/// # Safety
+///
+/// [`Borrow::borrow`] must be a pure function (no side-effects) and must not access any globals
+pub unsafe trait MaybeBorrowed<Target: ?Sized>: Borrow<Target> {}
 
-impl<T> ops::Deref for Cow<'_, T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Cow::Borrowed(x) => x,
-            Cow::Owned(x) => x,
-        }
-    }
-}
+/// SAFETY: `<T as Borrow<T>>::borrow` is the identity function
+unsafe impl<T: ?Sized> MaybeBorrowed<T> for T {}
+/// SAFETY: `<&T as Borrow<T>>::borrow` just derefs the pointer
+unsafe impl<T: ?Sized> MaybeBorrowed<T> for &T {}
 
 #[non_exhaustive]
 pub struct Split<'a, T, Extras: ?Sized> {

@@ -3,7 +3,7 @@ use crate::{
         DoubleBufferReaderPointer, DoubleBufferWriterPointer, IntoDoubleBufferWriterPointer,
         Strategy,
     },
-    raw::{Cow, DoubleBufferData},
+    raw::{DoubleBufferData, MaybeBorrowed},
 };
 
 use triomphe::{Arc, OffsetArc, UniqueArc};
@@ -58,9 +58,12 @@ unsafe impl<T, S: Strategy, Extras> DoubleBufferReaderPointer
     type Extras = Extras;
 
     type UpgradeError = core::convert::Infallible;
+    type MaybeBorrowed<'a> = &'a Self
+    where
+        Self: 'a;
 
     #[inline]
-    fn try_writer(&self) -> Result<Cow<'_, Self::Writer>, Self::UpgradeError> {
-        Ok(Cow::Borrowed(self))
+    fn try_writer(&self) -> Result<Self::MaybeBorrowed<'_>, Self::UpgradeError> {
+        Ok(self)
     }
 }

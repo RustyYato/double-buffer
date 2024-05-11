@@ -3,7 +3,7 @@ use crate::{
         DoubleBufferReaderPointer, DoubleBufferWriterPointer, IntoDoubleBufferWriterPointer,
         Strategy,
     },
-    raw::{Cow, DoubleBufferData},
+    raw::{DoubleBufferData, MaybeBorrowed},
 };
 
 use alloc::rc::{Rc, Weak};
@@ -58,10 +58,13 @@ unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferReaderPointer
     type Extras = Extras;
 
     type UpgradeError = RcUpgradeError;
+    type MaybeBorrowed<'a> = Self::Writer
+    where
+        Self: 'a;
 
     #[inline]
-    fn try_writer(&self) -> Result<Cow<'_, Self::Writer>, Self::UpgradeError> {
-        self.upgrade().map(Cow::Owned).ok_or(RcUpgradeError)
+    fn try_writer(&self) -> Result<Self::MaybeBorrowed<'_>, Self::UpgradeError> {
+        self.upgrade().ok_or(RcUpgradeError)
     }
 }
 

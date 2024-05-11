@@ -1,6 +1,4 @@
-use core::{marker::PhantomData, mem::ManuallyDrop, ops, ptr::NonNull};
-
-use super::Cow;
+use core::{borrow::Borrow, marker::PhantomData, mem::ManuallyDrop, ops, ptr::NonNull};
 
 use crate::interface::{
     self as iface, create_invalid_reader_id, DoubleBufferReaderPointer, DoubleBufferWriterPointer,
@@ -24,10 +22,10 @@ pub struct ReaderGuard<'a, T: ?Sized, P: DoubleBufferWriterPointer> {
     lt: PhantomData<&'a T>,
 }
 
-struct RawReaderGuard<'a, P: DoubleBufferWriterPointer> {
+struct RawReaderGuard<'a, P: 'a + DoubleBufferWriterPointer> {
     guard: ManuallyDrop<iface::ReaderGuard<P::Strategy>>,
     reader_id: &'a mut ReaderId<P::Strategy>,
-    writer: Cow<'a, P>,
+    writer: <P::Reader as DoubleBufferReaderPointer>::MaybeBorrowed<'a>,
 }
 
 impl<P: DoubleBufferWriterPointer> Drop for RawReaderGuard<'_, P> {
@@ -41,6 +39,7 @@ impl<P: DoubleBufferWriterPointer> Drop for RawReaderGuard<'_, P> {
         // Strategy::create_writer_id)
         unsafe {
             self.writer
+                .borrow()
                 .strategy
                 .release_read_guard(self.reader_id, guard)
         }
@@ -59,12 +58,13 @@ impl<P: DoubleBufferReaderPointer> Reader<P> {
     /// see the pointer's docs for when upgrading the pointer can fail
     pub fn try_read(&mut self) -> Result<ReaderGuard<'_, P::Buffer, P::Writer>, P::UpgradeError> {
         let ptr = self.ptr.try_writer()?;
+        let data = ptr.borrow();
         // SAFETY: the reader id is valid (this is an invariant of Self)
-        let guard = unsafe { ptr.strategy.acquire_read_guard(&mut self.id) };
+        let guard = unsafe { data.strategy.acquire_read_guard(&mut self.id) };
         // SAFETY: the guard was created from the given reader id, and is the latest guard
-        let swapped = unsafe { ptr.strategy.is_swapped(&mut self.id, &guard) };
+        let swapped = unsafe { data.strategy.is_swapped(&mut self.id, &guard) };
 
-        let (reader, _) = ptr.buffers.get(swapped);
+        let (reader, _) = data.buffers.get(swapped);
 
         Ok(ReaderGuard {
             // SAFETY: the pointer from ptr.buffers.get are always non-null
@@ -103,7 +103,7 @@ impl<P: DoubleBufferReaderPointer> Clone for Reader<P> {
     fn clone(&self) -> Self {
         let id = match self.ptr.try_writer() {
             // SAFETY: the reader id is valid (this is an invariant of Self)
-            Ok(ptr) => unsafe { ptr.strategy.create_reader_id_from_reader(&self.id) },
+            Ok(ptr) => unsafe { ptr.borrow().strategy.create_reader_id_from_reader(&self.id) },
             Err(_) => create_invalid_reader_id::<P::Strategy>(),
         };
 

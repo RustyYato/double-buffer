@@ -1,6 +1,6 @@
 use core::{ops, task::Context};
 
-use crate::raw::Cow;
+use crate::raw::MaybeBorrowed;
 
 pub(crate) type WriterId<S> = <S as Strategy>::WriterId;
 pub(crate) type ReaderId<S> = <S as Strategy>::ReaderId;
@@ -77,8 +77,11 @@ pub unsafe trait DoubleBufferReaderPointer: Clone {
     type Strategy: Strategy;
     type Buffer;
     type Extras: ?Sized;
+    type MaybeBorrowed<'a>: MaybeBorrowed<Self::Writer>
+    where
+        Self: 'a;
 
-    fn try_writer(&self) -> Result<Cow<'_, Self::Writer>, Self::UpgradeError>;
+    fn try_writer(&self) -> Result<Self::MaybeBorrowed<'_>, Self::UpgradeError>;
 }
 
 /// The syncronization strategy of the double buffer
