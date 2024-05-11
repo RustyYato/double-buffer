@@ -1,3 +1,7 @@
+//! The raw reader and writer types
+//!
+//!
+
 use core::{borrow::Borrow, cell::UnsafeCell};
 
 mod reader;
@@ -6,7 +10,9 @@ mod writer;
 pub use reader::{Reader, ReaderGuard};
 pub use writer::Writer;
 
-/// The payload of a double bufferd
+/// The payload of a double buffer, this holds the two buffers
+/// the strategy, and some extra data. (the extra data is for you
+/// to use however you want).
 pub struct DoubleBufferData<T, S, Extras: ?Sized = ()> {
     buffers: DoubleBufferCell<T>,
     pub strategy: S,
@@ -28,6 +34,7 @@ impl<T> DoubleBufferCell<T> {
 }
 
 impl<T, S> DoubleBufferData<T, S> {
+    /// Create a new payload with the given buffers and strategy
     #[inline]
     pub const fn new(back: T, front: T, strategy: S) -> Self {
         Self::with_extras(back, front, strategy, ())
@@ -35,6 +42,7 @@ impl<T, S> DoubleBufferData<T, S> {
 }
 
 impl<T, S, Extras> DoubleBufferData<T, S, Extras> {
+    /// Create a new payload with the given buffers, strategy, and extra value
     pub const fn with_extras(back: T, front: T, strategy: S, extras: Extras) -> Self {
         Self {
             buffers: DoubleBufferCell {
@@ -59,6 +67,7 @@ unsafe impl<T: ?Sized> MaybeBorrowed<T> for T {}
 /// SAFETY: `<&T as Borrow<T>>::borrow` just derefs the pointer
 unsafe impl<T: ?Sized> MaybeBorrowed<T> for &T {}
 
+/// The values stored in the buffers, returned by [`Writer::split`]
 #[non_exhaustive]
 pub struct Split<'a, T, Extras: ?Sized> {
     pub read: &'a T,
@@ -66,6 +75,7 @@ pub struct Split<'a, T, Extras: ?Sized> {
     pub extras: &'a Extras,
 }
 
+/// The values stored in the buffers, returned by [`Writer::split_mut`]
 #[non_exhaustive]
 pub struct SplitMut<'a, T, Extras: ?Sized> {
     pub read: &'a T,

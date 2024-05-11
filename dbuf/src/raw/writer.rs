@@ -7,7 +7,7 @@ use super::{reader::Reader, Split, SplitMut};
 
 /// A writer to a double buffer
 ///
-/// see module level docs for details on usage
+/// see [`raw`](super) module level docs for details on usage
 pub struct Writer<
     P: DoubleBufferWriterPointer,
     // use this "useless" pointer to regain covariance in the strategy and extras

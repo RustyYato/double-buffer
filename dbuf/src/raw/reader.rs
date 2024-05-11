@@ -32,6 +32,8 @@ struct RawReaderGuard<'a, P: 'a + DoubleBufferWriterPointer> {
     writer: <P::Reader as DoubleBufferReaderPointer>::MaybeBorrowed<'a>,
 }
 
+impl<P: Copy + DoubleBufferReaderPointer> Copy for Reader<P> where ReaderId<P::Strategy>: Copy {}
+
 /// SAFETY: [`RawReference`] is semantically equivilent to a [`&T`] but without
 /// the validity requirements
 unsafe impl<'a, T: ?Sized> Send for RawReference<'a, T> where T: Sync {}

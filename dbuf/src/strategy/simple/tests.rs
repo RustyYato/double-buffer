@@ -20,15 +20,10 @@ async fn smoke() {
     let x = reader.read();
     assert_eq!(*x, *writer.split().read);
 
+    drop(x);
+
     // SAFETY: afinish_swap is polled to completion before split_mut/get_mut is called
     let mut swap = unsafe { writer.try_start_swap().unwrap() };
-
-    // SAFETY: the swap is the latest swap
-    assert!(unsafe { writer.is_swap_finished(&mut swap) });
-
-    assert_eq!(*x, *writer.split().write);
-
-    drop(x);
 
     // SAFETY: the swap is the latest swap
     assert!(unsafe { writer.is_swap_finished(&mut swap) });

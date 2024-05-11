@@ -1,3 +1,65 @@
+//! A delay writer is a fundemental part building block for batched writes.
+//!
+//! The main idea is to finish swaps right before you write a batch, and
+//! then start a new swap. If you use a compatible strategy (such as
+//! [`FlashStrategy`](crate::strategy::flashmap::FlashStrategy)), then this
+//! enable writes to be wait-free for the most part, since all readers
+//! will have finished their reads before the next batch is written.
+//!
+//! # Worked Example
+//!
+//! Here is the worked example from the crate level docs adapated for [`DelayWriter`]
+//!  
+//! ```rust
+//! use dbuf::raw::{Writer, Reader, DoubleBufferData};
+//! use dbuf::strategy::flashmap::FlashStrategy;
+//!
+//! use rc_box::ArcBox;
+//! use std::sync::Arc;
+//!
+//! let front = 10;
+//! let back = 300;
+//!
+//! let mut data = DoubleBufferData::new(front, back, FlashStrategy::new_blocking());
+//! let writer: Writer<Arc<DoubleBufferData<i32, FlashStrategy<_>>>> = Writer::new(ArcBox::new(data));
+//!            // ^^^ note how this is a arc now, this is for a similar reason above
+//!            // use use `ArcBox`'s uniqueness guarantee to ensure
+//!            // the writer has exclusive access to the buffers, but
+//!            // after that, it needs to be downgraded so the buffers can be
+//!            // shared between the writer and readers
+//!
+//! /// Convert the write to a delay writer
+//! let mut writer = dbuf::delay::DelayWriter::from(writer);
+//!
+//! /// DelayWriter derefs to a normal writer, so you can all those methods as well
+//! let mut reader = writer.reader();
+//!
+//! // NOTE: you should handle the errors properly, instead of using unwrap
+//! // for this example, we know that the writer is still alive, so the unwrap
+//! // is justified
+//! let mut guard = reader.try_read().unwrap();
+//!
+//! // the front buffer is shown first
+//! assert_eq!(*guard, 10);
+//! assert_eq!(*writer.get(), 300);
+//!
+//! // this starts a swap, and blocks mutable access to the buffer
+//! writer.start_swap();
+//! // this is an error
+//! // assert_eq!(*writer.get_mut(), 10);
+//! assert_eq!(*writer.get(), 10);
+//!
+//! // end the active read, normally in your code this will happen
+//! // at the end of the scope automatically.
+//! drop(guard);
+//!
+//! // since the reader is dropped above, it is now safe to swap the buffers
+//! // and finish_swap returns a mutable refernce to the underlying writer
+//! // so you can do whatever you want to it.
+//! let writer = writer.finish_swap();
+//! assert_eq!(*writer.get_mut(), 10);
+//! ```
+
 use core::fmt::Debug;
 use core::ops;
 
@@ -6,6 +68,9 @@ use crate::{
     raw,
 };
 
+/// A batched-writer primitive
+///
+/// see module docs for details
 pub struct DelayWriter<
     P: DoubleBufferWriterPointer,
     S: Strategy = <P as DoubleBufferWriterPointer>::Strategy,

@@ -90,7 +90,7 @@ unsafe impl Strategy for SimpleStrategy {
 
     #[inline]
     unsafe fn acquire_read_guard(&self, _reader: &mut Self::ReaderId) -> Self::ReadGuard {
-        let swapped = self.swapped.get();
+        let swapped = !self.swapped.get();
         let num_readers = &self.num_readers[swapped as usize];
         num_readers.set(
             num_readers
