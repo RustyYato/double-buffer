@@ -13,7 +13,7 @@ pub(crate) type SwapError<S> = <S as Strategy>::SwapError;
 /// # Safety
 ///
 /// Self::deref, Self::deref_mut, Self::Writer::deref, Self::Writer::deref_mut
-/// must all point to the same [`DoubleBufferData`]
+/// must all point to the same [`DoubleBufferData`](crate::raw::DoubleBufferData)
 ///
 /// the writer produced by into_writer must not be aliased
 pub unsafe trait IntoDoubleBufferWriterPointer:
@@ -32,11 +32,12 @@ pub unsafe trait IntoDoubleBufferWriterPointer:
     fn into_writer(self) -> Self::Writer;
 }
 
-/// A pointer that can access a and may hold ownership over a [`DoubleBufferData`]
+/// A pointer that can access a and may hold ownership over a
+/// [`DoubleBufferData`](crate::raw::DoubleBufferData)
 ///
 /// # Safety
 ///
-/// Self::deref  must not change which [`DoubleBufferData`] it points to.
+/// Self::deref  must not change which [`DoubleBufferData`](crate::raw::DoubleBufferData) it points to.
 pub unsafe trait DoubleBufferWriterPointer:
     Clone
     + ops::Deref<Target = crate::raw::DoubleBufferData<Self::Buffer, Self::Strategy, Self::Extras>>
@@ -55,7 +56,8 @@ pub unsafe trait DoubleBufferWriterPointer:
     fn reader(&self) -> Self::Reader;
 }
 
-/// A pointer doesn't usually doesn't hold ownership over a [`DoubleBufferData`],
+/// A pointer doesn't usually doesn't hold ownership over a
+/// [`DoubleBufferData`](crate::raw::DoubleBufferData),
 /// but may be converted to a [`DoubleBufferWriterPointer`] to access it.
 ///
 /// # Safety
@@ -84,7 +86,8 @@ pub unsafe trait DoubleBufferReaderPointer: Clone {
 /// # Safety
 ///
 /// first some terminology, there is an active read during the time
-/// between a call to [`acquire_read_guard`] and [`release_read_guard`]
+/// between a call to [`acquire_read_guard`](Self::acquire_read_guard) and
+/// [`release_read_guard`](Self::release_read_guard)
 ///
 /// * finish_swap must not return if there is an active read
 pub unsafe trait Strategy {
@@ -99,7 +102,8 @@ pub unsafe trait Strategy {
     // id constructors
 
     /// Creates a valid writer id for this strategy, and invalidates all writer ids
-    /// and reader ids created by this strategy before this call to [`create_writer_id`].
+    /// and reader ids created by this strategy before this call to
+    /// [`create_writer_id`](Self::create_writer_id).
     fn create_writer_id(&mut self) -> Self::WriterId;
 
     /// Creates a valid reader id from the provided writer id
@@ -175,7 +179,8 @@ pub unsafe trait Strategy {
     /// Acquires a read guard. This ensures that the writer does not have write access to the
     /// current buffer while the read guard is active
     ///
-    /// NOTE: it is incorrect, but not *unsafe* to call [`acquire_read_guard`] while there is
+    /// NOTE: it is incorrect, but not *unsafe* to call
+    /// [`acquire_read_guard`](Self::acquire_read_guard) while there is
     /// an unreleased [`Self::ReadGuard`]. This can result in a panic, infinite loop, or any other
     /// strange but safe behavior.
     ///
@@ -197,7 +202,8 @@ pub unsafe trait Strategy {
 ///
 /// # Safety
 ///
-/// If register_context returns Poll::Ready, then is_swap_finished must return true
+/// If [`register_context`](Self::register_context) returns [`Poll::Ready`](core::task::Poll::Ready),
+/// then [`is_swap_finished`](Strategy::is_swap_finished) must return true
 pub unsafe trait AsyncStrategy: Strategy {
     /// registers a async context to an ongoing swap
     ///
@@ -219,7 +225,8 @@ pub unsafe trait AsyncStrategy: Strategy {
 ///
 /// # Safety
 ///
-/// If finish_swap returns, then is_swap_finished must return true
+/// If [`finish_swap`](Self::finish_swap) returns, then
+/// [`is_swap_finished`](Strategy::is_swap_finished) must return true
 pub unsafe trait BlockingStrategy: Strategy {
     /// Waits until the latest swap is finished
     ///
