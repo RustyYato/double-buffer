@@ -3,9 +3,10 @@ use core::{borrow::Borrow, cell::UnsafeCell};
 mod reader;
 mod writer;
 
-pub use reader::Reader;
+pub use reader::{Reader, ReaderGuard};
 pub use writer::Writer;
 
+/// The payload of a double bufferd
 pub struct DoubleBufferData<T, S, Extras: ?Sized = ()> {
     buffers: DoubleBufferCell<T>,
     pub strategy: S,

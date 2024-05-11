@@ -17,8 +17,12 @@ pub struct Reader<P, S: Strategy = <P as DoubleBufferReaderPointer>::Strategy> {
 /// A guard into the double buffer. As long as this guard is alive, the writer
 /// cannot write to the corrosponding buffer.
 pub struct ReaderGuard<'a, T: ?Sized, P: DoubleBufferWriterPointer> {
-    ptr: NonNull<T>,
+    ptr: RawReference<'a, T>,
     raw: RawReaderGuard<'a, P>,
+}
+
+struct RawReference<'a, T: ?Sized> {
+    ptr: NonNull<T>,
     lt: PhantomData<&'a T>,
 }
 
@@ -27,6 +31,25 @@ struct RawReaderGuard<'a, P: 'a + DoubleBufferWriterPointer> {
     reader_id: &'a mut ReaderId<P::Strategy>,
     writer: <P::Reader as DoubleBufferReaderPointer>::MaybeBorrowed<'a>,
 }
+
+/// SAFETY: [`RawReference`] is semantically equivilent to a [`&T`] but without
+/// the validity requirements
+unsafe impl<'a, T: ?Sized> Send for RawReference<'a, T> where T: Sync {}
+/// SAFETY: [`RawReference`] is semantically equivilent to a [`&T`] but without
+/// the validity requirements
+unsafe impl<'a, T: ?Sized> Sync for RawReference<'a, T> where T: Sync {}
+impl<'a, T: ?Sized> core::panic::UnwindSafe for RawReference<'a, T> where
+    T: core::panic::RefUnwindSafe
+{
+}
+impl<'a, T: ?Sized> core::panic::RefUnwindSafe for RawReference<'a, T> where
+    T: core::panic::RefUnwindSafe
+{
+}
+
+impl<'a, P: DoubleBufferWriterPointer> core::panic::UnwindSafe for RawReaderGuard<'a, P> {}
+impl<'a, P: DoubleBufferWriterPointer> core::panic::RefUnwindSafe for RawReaderGuard<'a, P> {}
+impl<'a, P: DoubleBufferWriterPointer> core::marker::Unpin for RawReaderGuard<'a, P> {}
 
 impl<P: DoubleBufferWriterPointer> Drop for RawReaderGuard<'_, P> {
     fn drop(&mut self) {
@@ -67,14 +90,16 @@ impl<P: DoubleBufferReaderPointer> Reader<P> {
         let (reader, _) = data.buffers.get(swapped);
 
         Ok(ReaderGuard {
-            // SAFETY: the pointer from ptr.buffers.get are always non-null
-            ptr: unsafe { NonNull::new_unchecked(reader.cast_mut()) },
+            ptr: RawReference {
+                // SAFETY: the pointer from ptr.buffers.get are always non-null
+                ptr: unsafe { NonNull::new_unchecked(reader.cast_mut()) },
+                lt: PhantomData,
+            },
             raw: RawReaderGuard {
                 guard: ManuallyDrop::new(guard),
                 reader_id: &mut self.id,
                 writer: ptr,
             },
-            lt: PhantomData,
         })
     }
 
@@ -121,7 +146,7 @@ impl<T: ?Sized, P: DoubleBufferWriterPointer> ops::Deref for ReaderGuard<'_, T, 
         // SAFETY: self.raw ensures that the writer doesn't have access to self.ptr
         // so there is no race with the writer, and readers cannot race with each other
         // self.ptr is NonNull, well aligned, allocated and valid for reads
-        unsafe { self.ptr.as_ref() }
+        unsafe { self.ptr.ptr.as_ref() }
     }
 }
 
@@ -133,9 +158,11 @@ impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
     ) -> Result<ReaderGuard<'a, U, P>, (Self, E)> {
         match f(&self) {
             Ok(ptr) => Ok(ReaderGuard {
-                ptr: NonNull::from(ptr),
+                ptr: RawReference {
+                    ptr: NonNull::from(ptr),
+                    lt: PhantomData,
+                },
                 raw: self.raw,
-                lt: PhantomData,
             }),
             Err(err) => Err((self, err)),
         }
