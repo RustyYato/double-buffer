@@ -160,8 +160,23 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
     /// # Safety
     ///
+    /// This swap should be the latest one created from try_start_swap
+    ///
+    /// This future should be driven to completion before calling any mutable methods on self
+    pub async unsafe fn afinish_swap(&mut self, mut swap: iface::Swap<P::Strategy>)
+    where
+        P::Strategy: AsyncStrategy,
+    {
+        // the caller ensures that this is the latests swap
+        unsafe { self.try_afinish_swap(&mut swap).await };
+    }
+
+    /// # Safety
+    ///
     /// this swap should be the latest one created from try_start_swap
-    pub async unsafe fn afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
+    ///
+    /// This future should be driven to completion before calling any mutable methods on self
+    pub async unsafe fn try_afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
     where
         P::Strategy: AsyncStrategy,
     {

@@ -4,3 +4,5 @@ pub mod flashmap;
 
 pub mod simple;
 pub mod simple_async;
+
+pub mod atomic;

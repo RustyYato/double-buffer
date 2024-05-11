@@ -64,7 +64,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         // next time this function is called
         if let Some(ref mut swap) = self.swap {
             // SAFETY: this swap is the latest swap
-            unsafe { self.writer.afinish_swap(swap) }.await;
+            unsafe { self.writer.try_afinish_swap(swap) }.await;
             // afinish_swap is driven to completion so now it's safe to clear the swap
             self.swap = None;
         }
