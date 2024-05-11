@@ -45,6 +45,10 @@ impl<T, S, Extras> DoubleBufferData<T, S, Extras> {
     }
 }
 
+/// A copy of [`alloc::borrow::Cow`] but specialized for just `Clone` types
+///
+/// It doesn't have the same extensive api, and is only used to avoid
+/// an atomic increment when reading from the buffer
 pub enum Cow<'a, T> {
     Borrowed(&'a T),
     Owned(T),

@@ -5,6 +5,9 @@ use crate::interface::{
 
 use super::{reader::Reader, Split, SplitMut};
 
+/// A writer to a double buffer
+///
+/// see module level docs for details on usage
 pub struct Writer<
     P: DoubleBufferWriterPointer,
     // use this "useless" pointer to regain covariance in the strategy and extras
@@ -14,6 +17,7 @@ pub struct Writer<
     ptr: P,
 }
 
+/// Create a new [`Writer`]
 pub fn new_writer<T: IntoDoubleBufferWriterPointer>(mut ptr: T) -> Writer<T::Writer> {
     let id = ptr.strategy.create_writer_id();
     let ptr = ptr.into_writer();
@@ -22,10 +26,12 @@ pub fn new_writer<T: IntoDoubleBufferWriterPointer>(mut ptr: T) -> Writer<T::Wri
 }
 
 impl<P: DoubleBufferWriterPointer> Writer<P> {
+    /// Create a new writer using the given unique buffer pointer
     pub fn new<T: IntoDoubleBufferWriterPointer<Writer = P>>(ptr: T) -> Self {
         new_writer(ptr)
     }
 
+    /// Create a new reader that points to the same buffers as this writer
     pub fn reader(&self) -> Reader<P::Reader> {
         // SAFETY: the writer id is valid
         let id = unsafe { self.ptr.strategy.create_reader_id_from_writer(&self.id) };
@@ -33,21 +39,25 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         unsafe { Reader::from_raw_parts(id, self.ptr.reader()) }
     }
 
+    /// Get a shared reference to the writer half of the double buffer
     #[inline]
     pub fn get(&self) -> &P::Buffer {
         self.split().write
     }
 
+    /// Get an exclusive reference to teh writer half of the double buffer
     #[inline]
     pub fn get_mut(&mut self) -> &mut P::Buffer {
         self.split_mut().write
     }
 
+    /// Get an extra data stored along-side the buffers
     #[inline]
     pub fn extras(&self) -> &P::Extras {
         &self.ptr.extras
     }
 
+    /// Get shared references to both buffers
     #[inline]
     pub fn split(&self) -> Split<P::Buffer, P::Extras> {
         let dbuf = &*self.ptr;
@@ -68,6 +78,8 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         }
     }
 
+    /// Get a shared reference to the reader-half and an exclusive reference to the writer half of
+    /// the buffers
     #[inline]
     pub fn split_mut(&mut self) -> SplitMut<P::Buffer, P::Extras> {
         let dbuf = &*self.ptr;
@@ -90,6 +102,9 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         }
     }
 
+    /// Try to swap the buffers, if the swap fails returns an error
+    ///
+    /// See the underlying strategy for details on when this may fail
     pub fn try_swap(&mut self) -> Result<(), iface::SwapError<P::Strategy>>
     where
         P::Strategy: BlockingStrategy,
@@ -104,6 +119,13 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         Ok(())
     }
 
+    /// Try to swap the buffers
+    ///
+    /// # Panics
+    ///
+    /// If the buffer swap fails for some reason, then this function will panic
+    ///
+    /// See the underlying strategy for details on when this may fail
     pub fn swap(&mut self)
     where
         P::Strategy: BlockingStrategy,
@@ -118,10 +140,14 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         }
     }
 
+    /// Try to start a buffer swap, returns an error if it's not possible
+    ///
+    /// See the underlying strategy for details on when this may fail
+    ///
     /// # Safety
     ///
     /// [`Self::finish_swap`] must be called or [`Self::afinish_swap`] must be polled to completion
-    /// before you can call [`Self::split_mut`] or [`Self::get_mut`]
+    /// before you can call [`Self::split_mut`] or [`Self::get_mut`] again
     ///
     /// # Safety
     ///
@@ -135,6 +161,8 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         unsafe { self.ptr.strategy.try_start_swap(&mut self.id) }
     }
 
+    /// Check if the given swap is completed
+    ///
     /// # Safety
     ///
     /// this swap should be the latest one created from [`Self::try_start_swap`]
@@ -143,6 +171,13 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         unsafe { self.ptr.strategy.is_swap_finished(&mut self.id, swap) }
     }
 
+    /// Finish an ongoing swap
+    ///
+    /// If you are using an async strategy, use [`Self::afinish_swap`]
+    ///
+    /// NOTE: This future must be driven to completion before you can call
+    /// [`Self::split_mut`] or [`Self::get_mut`]
+    ///
     /// # Safety
     ///
     /// this swap should be the latest one created from [`Self::try_start_swap`]
@@ -159,6 +194,10 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         core::mem::forget(no_unwind);
     }
 
+    /// Finish an ongoing swap
+    ///
+    /// If you are using a blocking strategy, use [`Self::finish_swap`]
+    ///
     /// # Safety
     ///
     /// This swap should be the latest one created from [`Self::try_start_swap`]
@@ -168,10 +207,15 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     where
         P::Strategy: AsyncStrategy,
     {
-        // SAFETY: the caller ensures that this is the latests swap
+        // SAFETY: the caller ensures that this is the latest swap
         unsafe { self.try_afinish_swap(&mut swap).await };
     }
 
+    /// Try to finish a swap
+    ///
+    /// This is an internal implementation detail that [`DelayWriter`] uses.
+    /// It is not meant to be exposed to the user, and  users should only use [`Self::afinish_swap`]
+    ///
     /// # Safety
     ///
     /// this swap should be the latest one created from try_start_swap
@@ -179,7 +223,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// This future should be driven to completion before calling any mutable methods on self
     /// or this the swap should be completed via one of the other methods
     /// ([`Self::afinish_swap`], [`Self::finish_swap`])
-    pub async unsafe fn try_afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
+    pub(crate) async unsafe fn try_afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
     where
         P::Strategy: AsyncStrategy,
     {

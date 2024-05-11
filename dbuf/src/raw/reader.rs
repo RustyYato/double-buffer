@@ -7,11 +7,17 @@ use crate::interface::{
     ReaderId, Strategy,
 };
 
+/// A reader into a double buffer
+///
+/// This is initially created from [`Writer::reader`](crate::raw::Writer::reader), but
+/// can then be cloned as much as you need.
 pub struct Reader<P, S: Strategy = <P as DoubleBufferReaderPointer>::Strategy> {
     id: ReaderId<S>,
     ptr: P,
 }
 
+/// A guard into the double buffer. As long as this guard is alive, the writer
+/// cannot write to the corrosponding buffer.
 pub struct ReaderGuard<'a, T: ?Sized, P: DoubleBufferWriterPointer> {
     ptr: NonNull<T>,
     raw: RawReaderGuard<'a, P>,
@@ -42,11 +48,15 @@ impl<P: DoubleBufferWriterPointer> Drop for RawReaderGuard<'_, P> {
 }
 
 impl<P: DoubleBufferReaderPointer> Reader<P> {
+    /// Create a new reader from an id and pointer
     #[inline]
     pub(crate) const unsafe fn from_raw_parts(id: ReaderId<P::Strategy>, ptr: P) -> Self {
         Self { id, ptr }
     }
 
+    /// Try to access the read buffer, if it fails then returns an error
+    ///
+    /// see the pointer's docs for when upgrading the pointer can fail
     pub fn try_read(&mut self) -> Result<ReaderGuard<'_, P::Buffer, P::Writer>, P::UpgradeError> {
         let ptr = self.ptr.try_writer()?;
         // SAFETY: the reader id is valid (this is an invariant of Self)
@@ -68,6 +78,11 @@ impl<P: DoubleBufferReaderPointer> Reader<P> {
         })
     }
 
+    /// Try to access the read buffer
+    ///
+    /// # Panic
+    ///
+    /// If upgrading the pointer fails, this will panic
     pub fn read(&mut self) -> ReaderGuard<'_, P::Buffer, P::Writer>
     where
         P::UpgradeError: core::fmt::Debug,
@@ -111,6 +126,7 @@ impl<T: ?Sized, P: DoubleBufferWriterPointer> ops::Deref for ReaderGuard<'_, T, 
 }
 
 impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
+    /// Try to map the [`ReaderGuard`] to another value
     pub fn try_map<U: ?Sized, E>(
         self,
         f: impl FnOnce(&T) -> Result<&U, E>,
@@ -125,6 +141,7 @@ impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
         }
     }
 
+    /// Map the [`ReaderGuard`] to another value
     pub fn map<U: ?Sized>(self, f: impl FnOnce(&T) -> &U) -> ReaderGuard<'a, U, P> {
         match self.try_map::<_, core::convert::Infallible>(move |t| Ok(f(t))) {
             Ok(guard) => guard,
