@@ -53,7 +53,7 @@ unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferWriterPointer
 // * multiple calls to try_writer must yield the same writer
 //   try_writer always returns self
 // * once try_writer returns [`Err`], it must never return [`Ok`] again
-//   try_writer never returns Err
+//   try_writer never returns [`Err`]
 unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferReaderPointer
     for &DoubleBufferData<T, S, Extras>
 {

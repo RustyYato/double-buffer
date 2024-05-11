@@ -28,8 +28,8 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
 
     pub fn try_start_swap(&mut self) -> Result<(), SwapError<P::Strategy>> {
         if self.swap.is_none() {
-            // SAFETY: DelayWriter ensures that finish_swap is called before allowing
-            // mutable access to the writer
+            // SAFETY: `DelayWriter` ensures that `finish_swap` or `afinish_swap`
+            // is called before allowing mutable access to the `writer`
             self.swap = Some(unsafe { self.writer.try_start_swap()? })
         }
 

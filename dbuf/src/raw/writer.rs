@@ -120,23 +120,24 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
     /// # Safety
     ///
-    /// finish_swap must be called or afinish_swap must be polled to completion
-    /// before you can call split_mut or get_mut
+    /// [`Self::finish_swap`] must be called or [`Self::afinish_swap`] must be polled to completion
+    /// before you can call [`Self::split_mut`] or [`Self::get_mut`]
     ///
     /// # Safety
     ///
-    /// there should be no calls to split_mut or get_mut until is_swap_finished returns true,
-    /// finish_swap is called or afinish_swap is driven to completion
+    /// there should be no calls to [`Self::split_mut`] or [`Self::get_mut`] until
+    /// [`Self::is_swap_finished`] returns true, [`Self::finish_swap`] is called
+    /// or [`Self::afinish_swap`] is driven to completion
     pub unsafe fn try_start_swap(
         &mut self,
     ) -> Result<iface::Swap<P::Strategy>, iface::SwapError<P::Strategy>> {
-        // SAFETY: teh writer id is valid (invariant of Self)
+        // SAFETY: the writer id is valid (invariant of Self)
         unsafe { self.ptr.strategy.try_start_swap(&mut self.id) }
     }
 
     /// # Safety
     ///
-    /// this swap should be the latest one created from try_start_swap
+    /// this swap should be the latest one created from [`Self::try_start_swap`]
     pub unsafe fn is_swap_finished(&mut self, swap: &mut iface::Swap<P::Strategy>) -> bool {
         // SAFETY: guaranteed by caller
         unsafe { self.ptr.strategy.is_swap_finished(&mut self.id, swap) }
@@ -144,7 +145,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
     /// # Safety
     ///
-    /// this swap should be the latest one created from try_start_swap
+    /// this swap should be the latest one created from [`Self::try_start_swap`]
     pub unsafe fn finish_swap(&mut self, swap: iface::Swap<P::Strategy>)
     where
         P::Strategy: BlockingStrategy,
@@ -160,7 +161,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
     /// # Safety
     ///
-    /// This swap should be the latest one created from try_start_swap
+    /// This swap should be the latest one created from [`Self::try_start_swap`]
     ///
     /// This future should be driven to completion before calling any mutable methods on self
     pub async unsafe fn afinish_swap(&mut self, mut swap: iface::Swap<P::Strategy>)
@@ -177,8 +178,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     ///
     /// This future should be driven to completion before calling any mutable methods on self
     /// or this the swap should be completed via one of the other methods
-    /// ([`afinish_swap`](Self::afinish_swap),
-    /// [`finish_swap`](Self::finish_swap))
+    /// ([`Self::afinish_swap`], [`Self::finish_swap`])
     pub async unsafe fn try_afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
     where
         P::Strategy: AsyncStrategy,

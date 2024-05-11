@@ -13,7 +13,7 @@ macro_rules! static_once {
             )
             .is_ok()
         {
-            #[allow(static_mut_ref)]
+            #[allow(static_mut_refs)]
             // SAFETY: This value is only accessed once
             Some(unsafe { &mut VALUE })
         } else {
@@ -37,7 +37,7 @@ macro_rules! static_once {
                 // SAFETY: This value is only accessed once
                 value => unsafe { VALUE = $crate::macros::MaybeUninit::new(value) },
             }
-            #[allow(static_mut_ref)]
+            #[allow(static_mut_refs)]
             // SAFETY: This value is only accessed once
             Some(unsafe { &mut *VALUE.as_mut_ptr() })
         } else {
