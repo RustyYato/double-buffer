@@ -117,7 +117,7 @@ mod seal {
 ///
 /// # Safety
 ///
-/// ParkToken::wait must not unwind
+/// ParkToken::wake must not unwind
 pub unsafe trait Parker: Sized + seal::Seal {
     #[doc(hidden)]
     const NEW: Self;
@@ -141,14 +141,24 @@ unsafe impl Parker for ThreadParkToken {
 }
 
 impl seal::Seal for AsyncParkToken {}
-// # SAFETY: thread::park doesn not unwind
+// SAFETY: there is a panic guard to ensure that wake doesn't unwind
 unsafe impl Parker for AsyncParkToken {
     #[doc(hidden)]
     const NEW: Self = AsyncParkToken(atomic_waker::AtomicWaker::new());
 
     #[doc(hidden)]
     unsafe fn wake(&self) {
-        self.0.wake()
+        struct Bomb;
+
+        impl Drop for Bomb {
+            fn drop(&mut self) {
+                panic!("Tried to panic out of an async Waker::wake")
+            }
+        }
+
+        let guard = Bomb;
+        self.0.wake();
+        core::mem::forget(guard);
     }
 }
 
