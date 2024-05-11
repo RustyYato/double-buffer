@@ -68,7 +68,7 @@ pub struct Swap {
 }
 
 impl FlashStrategy<ThreadParkToken> {
-    pub const fn new() -> Self {
+    pub const fn new_blocking() -> Self {
         Self::with_park_token()
     }
 }
@@ -80,8 +80,29 @@ impl FlashStrategy<AsyncParkToken> {
 }
 
 impl FlashStrategy<AdaptiveStrategy> {
-    pub const fn new_adaptive() -> Self {
+    pub const fn new() -> Self {
         Self::with_park_token()
+    }
+}
+
+impl Default for FlashStrategy<ThreadParkToken> {
+    #[inline]
+    fn default() -> Self {
+        Self::new_blocking()
+    }
+}
+
+impl Default for FlashStrategy<AsyncParkToken> {
+    #[inline]
+    fn default() -> Self {
+        Self::new_async()
+    }
+}
+
+impl Default for FlashStrategy<AdaptiveStrategy> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 

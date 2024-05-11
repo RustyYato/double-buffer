@@ -23,6 +23,12 @@ impl SimpleAsyncStrategy {
     }
 }
 
+impl Default for SimpleAsyncStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // SAFETY:
 //
 // If there are no readers currently reading from the buffer

@@ -21,6 +21,13 @@ impl SimpleStrategy {
     }
 }
 
+impl Default for SimpleStrategy {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // SAFETY:
 //
 // If there are no readers currently reading from the buffer

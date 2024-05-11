@@ -3,7 +3,7 @@ use crate::{
         DoubleBufferReaderPointer, DoubleBufferWriterPointer, IntoDoubleBufferWriterPointer,
         Strategy,
     },
-    raw::{DoubleBufferData, MaybeBorrowed},
+    raw::DoubleBufferData,
 };
 
 #[cfg(feature = "triomphe")]

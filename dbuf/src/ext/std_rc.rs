@@ -3,7 +3,7 @@ use crate::{
         DoubleBufferReaderPointer, DoubleBufferWriterPointer, IntoDoubleBufferWriterPointer,
         Strategy,
     },
-    raw::{DoubleBufferData, MaybeBorrowed},
+    raw::DoubleBufferData,
 };
 
 use alloc::rc::{Rc, Weak};
