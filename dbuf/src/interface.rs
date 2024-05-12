@@ -84,7 +84,7 @@ pub unsafe trait DoubleBufferReaderPointer: Clone {
     fn try_writer(&self) -> Result<Self::MaybeBorrowed<'_>, Self::UpgradeError>;
 }
 
-/// The syncronization strategy of the double buffer
+/// The synchronization strategy of the double buffer
 ///
 /// # Safety
 ///

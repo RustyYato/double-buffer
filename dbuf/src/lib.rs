@@ -32,7 +32,7 @@
 //! used stand-alone, if need be.
 //!
 //! The main types are [`raw::Writer`] and [`raw::Reader`]. This type is parameterized
-//! by a pointer type, a strategy, and a buffer type of your chosing.
+//! by a pointer type, a strategy, and a buffer type of your choosing.
 //!
 //! This type also provides a wrapper around [`raw::Writer`] which allows you to
 //! start swaps early using [`delay::DelayWriter`]. This is useful for batched writes, where you can start a
@@ -63,7 +63,7 @@
 //! It allows the data to be destroyed as soon as the writer is dropped and
 //! all outstanding reads are complete. (does not require all readers to be dropped).
 //!
-//! Expensive to copy [`raw::Reader`] in a tight loop, since it requries an atomic increment/decrement.
+//! Expensive to copy [`raw::Reader`] in a tight loop, since it requires an atomic increment/decrement.
 //!
 //! But it allows the data to be destroyed as soon as the writer is dropped and
 //! all outstanding reads are complete. (does not require all readers to be dropped).
@@ -114,7 +114,7 @@
 //!                // shared between the writer and readers
 //!
 //! // The reader must be mutable, because raw::Reader::read takes a &mut reference
-//! // to prove that the read isn't reentrant. This allows for a more optimized implementation
+//! // to prove that the read isn't re-entrant. This allows for a more optimized implementation
 //! // that doesn't need to count how many times a reader has started reading.
 //! let mut reader = writer.reader();
 //!

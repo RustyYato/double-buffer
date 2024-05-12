@@ -23,7 +23,7 @@ mod test;
 
 pub struct ThreadParkToken(Cell<Option<Thread>>);
 pub struct AsyncParkToken(atomic_waker::AtomicWaker);
-pub struct AdaptiveStrategy {
+pub struct AdaptiveParkToken {
     thread_token: ThreadParkToken,
     async_token: AsyncParkToken,
 }
@@ -79,7 +79,7 @@ impl FlashStrategy<AsyncParkToken> {
     }
 }
 
-impl FlashStrategy<AdaptiveStrategy> {
+impl FlashStrategy<AdaptiveParkToken> {
     pub const fn new() -> Self {
         Self::with_park_token()
     }
@@ -99,7 +99,7 @@ impl Default for FlashStrategy<AsyncParkToken> {
     }
 }
 
-impl Default for FlashStrategy<AdaptiveStrategy> {
+impl Default for FlashStrategy<AdaptiveParkToken> {
     #[inline]
     fn default() -> Self {
         Self::new()
@@ -132,7 +132,8 @@ mod seal {
 
 /// This is an internal trait, do not use it directly.
 ///
-/// It only exists as an implementation detail to abstract over ThreadParkToken and AsyncParkToken
+/// It only exists as an implementation detail to abstract over [`ThreadParkToken`],
+/// [`AsyncParkToken`], and [`AdaptiveParkToken`]
 ///
 /// This trait is sealed, so you cannot implement this trait.
 ///
@@ -148,7 +149,7 @@ pub unsafe trait Parker: Sized + seal::Seal {
 }
 
 impl seal::Seal for ThreadParkToken {}
-// # SAFETY: thread::park doesn not unwind
+// # SAFETY: thread::park doesn't unwind
 unsafe impl Parker for ThreadParkToken {
     #[doc(hidden)]
     const NEW: Self = ThreadParkToken(Cell::new(None));
@@ -183,11 +184,11 @@ unsafe impl Parker for AsyncParkToken {
     }
 }
 
-impl seal::Seal for AdaptiveStrategy {}
-// # SAFETY: thread::park doesn not unwind
-unsafe impl Parker for AdaptiveStrategy {
+impl seal::Seal for AdaptiveParkToken {}
+// # SAFETY: Parker::wake can't unwind for thread_token and async_token
+unsafe impl Parker for AdaptiveParkToken {
     #[doc(hidden)]
-    const NEW: Self = AdaptiveStrategy {
+    const NEW: Self = AdaptiveParkToken {
         thread_token: ThreadParkToken::NEW,
         async_token: AsyncParkToken::NEW,
     };
@@ -264,7 +265,7 @@ unsafe impl<ParkToken: self::Parker> Strategy for FlashStrategy<ParkToken> {
         //
         // There are at most 1 Self::WriterId's associated with a given strategy at a time.
         //
-        // So there must be some syncronization between this and `try_start_swap`.
+        // So there must be some synchronization between this and `try_start_swap`.
         // So there can be no race between that write and this read.
         //
         // And it is fine to race two (non-atomic) reads
@@ -339,7 +340,7 @@ unsafe impl<ParkToken: self::Parker> Strategy for FlashStrategy<ParkToken> {
 
         let residual = self.residual.fetch_sub(1, Ordering::AcqRel);
 
-        // if there are more resiudal readers, then someone else will wake up the writer
+        // if there are more residual readers, then someone else will wake up the writer
         if residual != 1 {
             return;
         }
@@ -390,7 +391,7 @@ unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
 }
 
 // SAFETY: we check if is_swap_finished would return true before returning Poll::Ready
-unsafe impl AsyncStrategy for FlashStrategy<AdaptiveStrategy> {
+unsafe impl AsyncStrategy for FlashStrategy<AdaptiveParkToken> {
     unsafe fn register_context(
         &self,
         _writer: &mut Self::WriterId,
@@ -408,7 +409,7 @@ unsafe impl AsyncStrategy for FlashStrategy<AdaptiveStrategy> {
 }
 
 // SAFETY: we check if is_swap_finished would return true before returning
-unsafe impl BlockingStrategy for FlashStrategy<AdaptiveStrategy> {
+unsafe impl BlockingStrategy for FlashStrategy<AdaptiveParkToken> {
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
         if self
             .poll(&mut swap, |should_set| {

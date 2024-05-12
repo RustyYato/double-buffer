@@ -45,7 +45,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         self.split().write
     }
 
-    /// Get an exclusive reference to teh writer half of the double buffer
+    /// Get an exclusive reference to the writer half of the double buffer
     #[inline]
     pub fn get_mut(&mut self) -> &mut P::Buffer {
         self.split_mut().write
@@ -111,7 +111,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     {
         // SAFETY: there are no calls to split_mut or get_mut in this function
         // and we immediately call finish_swap, which cannot unwind, so there are no
-        // code paths, inclduing panic code paths which can lead to a call to split_mut
+        // code paths, including panic code paths which can lead to a call to split_mut
         // or get_mut without finish_swap completing
         let swap = unsafe { self.try_start_swap()? };
         // SAFETY: the swap is the latest swap

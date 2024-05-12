@@ -15,7 +15,7 @@ pub struct Reader<P, S: Strategy = <P as DoubleBufferReaderPointer>::Strategy> {
 }
 
 /// A guard into the double buffer. As long as this guard is alive, the writer
-/// cannot write to the corrosponding buffer.
+/// cannot write to the corresponding buffer.
 pub struct ReaderGuard<'a, T: ?Sized, P: DoubleBufferWriterPointer> {
     ptr: RawReference<'a, T>,
     raw: RawReaderGuard<'a, P>,
@@ -34,10 +34,10 @@ struct RawReaderGuard<'a, P: 'a + DoubleBufferWriterPointer> {
 
 impl<P: Copy + DoubleBufferReaderPointer> Copy for Reader<P> where ReaderId<P::Strategy>: Copy {}
 
-/// SAFETY: [`RawReference`] is semantically equivilent to a [`&T`] but without
+/// SAFETY: [`RawReference`] is semantically equivalent to a [`&T`] but without
 /// the validity requirements
 unsafe impl<'a, T: ?Sized> Send for RawReference<'a, T> where T: Sync {}
-/// SAFETY: [`RawReference`] is semantically equivilent to a [`&T`] but without
+/// SAFETY: [`RawReference`] is semantically equivalent to a [`&T`] but without
 /// the validity requirements
 unsafe impl<'a, T: ?Sized> Sync for RawReference<'a, T> where T: Sync {}
 impl<'a, T: ?Sized> core::panic::UnwindSafe for RawReference<'a, T> where
@@ -147,7 +147,7 @@ impl<T: ?Sized, P: DoubleBufferWriterPointer> ops::Deref for ReaderGuard<'_, T, 
     fn deref(&self) -> &Self::Target {
         // SAFETY: self.raw ensures that the writer doesn't have access to self.ptr
         // so there is no race with the writer, and readers cannot race with each other
-        // self.ptr is NonNull, well aligned, allocated and valid for reads
+        // self.ptr is non-null, well aligned, allocated and valid for reads
         unsafe { self.ptr.ptr.as_ref() }
     }
 }

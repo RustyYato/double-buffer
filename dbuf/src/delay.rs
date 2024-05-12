@@ -1,4 +1,4 @@
-//! A delay writer is a fundemental part building block for batched writes.
+//! A delay writer is a fundamental part building block for batched writes.
 //!
 //! The main idea is to finish swaps right before you write a batch, and
 //! then start a new swap. If you use a compatible strategy (such as
@@ -8,7 +8,7 @@
 //!
 //! # Worked Example
 //!
-//! Here is the worked example from the crate level docs adapated for [`DelayWriter`]
+//! Here is the worked example from the crate level docs adapted for [`DelayWriter`]
 //!  
 //! ```rust
 //! use dbuf::raw::{Writer, Reader, DoubleBufferData};
@@ -54,7 +54,7 @@
 //! drop(guard);
 //!
 //! // since the reader is dropped above, it is now safe to swap the buffers
-//! // and finish_swap returns a mutable refernce to the underlying writer
+//! // and finish_swap returns a mutable reference to the underlying writer
 //! // so you can do whatever you want to it.
 //! let writer = writer.finish_swap();
 //! assert_eq!(*writer.get_mut(), 10);
@@ -87,10 +87,16 @@ impl<P: DoubleBufferWriterPointer> From<raw::Writer<P>> for DelayWriter<P> {
 }
 
 impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
+    /// Construct a new delay writer
     pub const fn from_writer(writer: raw::Writer<P>) -> Self {
         Self { writer, swap: None }
     }
 
+    /// Try to start a new swap
+    ///
+    /// If there is already an ongoing swap, this is a no-op
+    ///
+    /// If there the strategy fails to swap, an error is returned
     pub fn try_start_swap(&mut self) -> Result<(), SwapError<P::Strategy>> {
         if self.swap.is_none() {
             // SAFETY: `DelayWriter` ensures that `finish_swap` or `afinish_swap`
@@ -101,13 +107,21 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         Ok(())
     }
 
+    /// Start a swap
+    ///
+    /// If there is already an ongoing swap, this is a no-op
+    ///
+    /// If there the strategy fails to swap, then this function panics
     pub fn start_swap(&mut self)
     where
         SwapError<P::Strategy>: Debug,
     {
-        self.try_start_swap().expect("start stop must not fail")
+        self.try_start_swap().expect("start swap must not fail")
     }
 
+    /// Finish an ongoing swap, and return a refernce to the underlying writer
+    ///
+    /// If there is no ongoing swap, then this is a no-op
     pub fn finish_swap(&mut self) -> &mut raw::Writer<P>
     where
         P::Strategy: BlockingStrategy,
@@ -120,12 +134,15 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         &mut self.writer
     }
 
+    /// Finish an ongoing swap, and return a refernce to the underlying writer
+    ///
+    /// If there is no ongoing swap, then this is a no-op
     pub async fn afinish_swap(&mut self) -> &mut raw::Writer<P>
     where
         P::Strategy: AsyncStrategy,
     {
         // we cannot clear the swap now because it's possible that this future
-        // will be cancelled. In which case we should resume this swap the
+        // will be canceled. In which case we should resume this swap the
         // next time this function is called
         if let Some(ref mut swap) = self.swap {
             // SAFETY: this swap is the latest swap
@@ -137,6 +154,11 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         &mut self.writer
     }
 
+    /// check if the writer is not in the middle of a swap
+    ///
+    /// if there is an in progress swap, then check that swap
+    ///
+    /// if there is no in progress swap, then return true
     #[inline]
     pub fn is_swap_finished(&mut self) -> bool {
         if let Some(ref mut swap) = self.swap {
@@ -151,11 +173,15 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         }
     }
 
+    /// check if there is an in progress swap
     #[inline]
     pub fn has_swap(&mut self) -> bool {
         self.swap.is_some()
     }
 
+    /// try to get the underlying writer, but fails if there is a swap in progress
+    ///
+    /// Call [`Self::into_writer`] or [`Self::ainto_writer`]
     pub fn try_into_writer(self) -> Result<raw::Writer<P>, Self> {
         match self.swap {
             Some(_) => Err(self),
@@ -163,6 +189,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         }
     }
 
+    /// finish any ongoing swaps and get the underlying writer
     pub fn into_writer(mut self) -> raw::Writer<P>
     where
         P::Strategy: BlockingStrategy,
@@ -171,6 +198,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         self.writer
     }
 
+    /// finish any ongoing swaps and get the underlying writer
     pub async fn ainto_writer(mut self) -> raw::Writer<P>
     where
         P::Strategy: AsyncStrategy,
@@ -179,6 +207,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         self.writer
     }
 
+    /// get the underlying writer, returns None if there is an ongoing swap
     pub fn get_writer_mut(&mut self) -> Option<&mut raw::Writer<P>> {
         match self.swap {
             Some(_) => None,
