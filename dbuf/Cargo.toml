@@ -12,6 +12,7 @@ alloc = ["dep:rc-box"]
 triomphe = ["dep:triomphe"]
 
 [dependencies]
+sync_wrapper = "1"
 
 [dependencies.rc-box]
 optional = true

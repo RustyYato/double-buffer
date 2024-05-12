@@ -204,3 +204,11 @@ pub mod raw;
 
 #[doc(hidden)]
 pub mod macros;
+
+#[cfg(feature = "alloc")]
+mod vec_drain;
+
+#[cfg(feature = "alloc")]
+pub use rc_box;
+#[cfg(feature = "triomphe")]
+pub use triomphe;
