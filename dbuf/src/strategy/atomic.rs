@@ -94,7 +94,7 @@ unsafe impl Strategy for AtomicStrategy {
 
     #[inline]
     unsafe fn acquire_read_guard(&self, _reader: &mut Self::ReaderId) -> Self::ReadGuard {
-        let swapped = self.which.load(Ordering::Acquire);
+        let swapped = !self.which.load(Ordering::Acquire);
         let num_readers = &self.num_readers[swapped as usize];
         let readers = num_readers.fetch_add(1, Ordering::Acquire);
 
