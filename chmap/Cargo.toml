@@ -1,0 +1,8 @@
+[package]
+name = "chmap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dbuf.path = "../dbuf"
+hashbrown = "0.14"
