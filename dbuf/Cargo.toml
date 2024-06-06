@@ -13,6 +13,7 @@ triomphe = ["dep:triomphe"]
 
 [dependencies]
 sync_wrapper = "1"
+crossbeam-utils = { version = "0.8.20", default-features = false }
 
 [dependencies.rc-box]
 optional = true
@@ -29,7 +30,14 @@ version = "1"
 default-features = false
 optional = true
 
+[target."cfg(loom)".dependencies.loom]
+version = "0.7"
+features = ["checkpoint"]
+
 [dev-dependencies.pollster]
 version = "0.3"
 features = ["macro"]
+
+[lints.rust]
+ unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }
 
