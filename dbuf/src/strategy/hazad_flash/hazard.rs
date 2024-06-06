@@ -60,7 +60,7 @@ impl<T, const N: usize> RawHazardGuard<T, N> {
 impl<T, const N: usize> Drop for RawHazardGuard<T, N> {
     fn drop(&mut self) {
         unsafe {
-            &(*self.node.as_ptr())
+            (*self.node.as_ptr())
                 .is_locked
                 .store(false, Ordering::Release);
         }

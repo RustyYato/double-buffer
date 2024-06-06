@@ -1,13 +1,14 @@
-use core::{cell::Cell, task::Context};
+use core::{
+    cell::Cell,
+    task::{Context, RawWaker, RawWakerVTable, Waker},
+};
 
 #[cfg(feature = "std")]
 use std::thread::Thread;
 
-use atomic_waker::AtomicWaker;
-
 #[cfg(feature = "std")]
 pub struct ThreadParkToken(Cell<Option<Thread>>);
-pub struct AsyncParkToken(AtomicWaker);
+pub struct AsyncParkToken(Cell<Option<Waker>>);
 #[cfg(feature = "std")]
 pub struct AdaptiveParkToken {
     pub(crate) thread_token: ThreadParkToken,
@@ -36,8 +37,10 @@ pub unsafe trait Parker: Sized + seal::Seal {
     unsafe fn wake(&self);
 }
 
+#[cfg(feature = "std")]
 impl seal::Seal for ThreadParkToken {}
 // # SAFETY: thread::park doesn't unwind
+#[cfg(feature = "std")]
 unsafe impl Parker for ThreadParkToken {
     #[doc(hidden)]
     const NEW: Self = ThreadParkToken(Cell::new(None));
@@ -50,6 +53,7 @@ unsafe impl Parker for ThreadParkToken {
     }
 }
 
+#[cfg(feature = "std")]
 impl ThreadParkToken {
     pub const fn new() -> Self {
         Self(Cell::new(None))
@@ -66,15 +70,15 @@ impl ThreadParkToken {
 
 impl AsyncParkToken {
     pub const fn new() -> Self {
-        Self(AtomicWaker::new())
+        Self(Cell::new(None))
     }
 
     pub fn set(&self, ctx: &mut Context) {
-        self.0.register(ctx.waker())
+        self.0.set(Some(ctx.waker().clone()))
     }
 
     pub fn clear(&self) {
-        self.0.take();
+        self.0.set(None);
     }
 }
 
@@ -82,7 +86,7 @@ impl seal::Seal for AsyncParkToken {}
 // SAFETY: there is a panic guard to ensure that wake doesn't unwind
 unsafe impl Parker for AsyncParkToken {
     #[doc(hidden)]
-    const NEW: Self = AsyncParkToken(atomic_waker::AtomicWaker::new());
+    const NEW: Self = Self::new();
 
     #[doc(hidden)]
     unsafe fn wake(&self) {
@@ -95,13 +99,17 @@ unsafe impl Parker for AsyncParkToken {
         }
 
         let guard = Bomb;
-        self.0.wake();
+        if let Some(waker) = self.0.take() {
+            waker.wake()
+        }
         core::mem::forget(guard);
     }
 }
 
+#[cfg(feature = "std")]
 impl seal::Seal for AdaptiveParkToken {}
 // # SAFETY: Parker::wake can't unwind for thread_token and async_token
+#[cfg(feature = "std")]
 unsafe impl Parker for AdaptiveParkToken {
     #[doc(hidden)]
     const NEW: Self = AdaptiveParkToken {

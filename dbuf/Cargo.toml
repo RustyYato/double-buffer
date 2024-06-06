@@ -7,7 +7,7 @@ edition = "2021"
 
 default = ["std", "triomphe"]
 
-std = ["alloc", "dep:atomic-waker"]
+std = ["alloc"]
 alloc = ["dep:rc-box"]
 triomphe = ["dep:triomphe"]
 
@@ -24,11 +24,6 @@ default-features = false
 optional = true
 version = "0.1.11"
 default-features = false
-
-[dependencies.atomic-waker]
-version = "1"
-default-features = false
-optional = true
 
 [target."cfg(loom)".dependencies.loom]
 version = "0.7"
