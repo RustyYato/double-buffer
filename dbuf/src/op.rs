@@ -19,11 +19,11 @@ pub struct OpWriter<
     water_line: usize,
 }
 
-pub trait Operation<T: ?Sized, E: ?Sized>: Sized {
-    fn apply(&mut self, buffer: &mut T, extra: &mut E);
+pub trait Operation<T: ?Sized, E: ?Sized, P: ?Sized>: Sized {
+    fn apply(&mut self, buffer: &mut T, extra: &E, params: &mut P);
 
-    fn apply_once(mut self, buffer: &mut T, extra: &mut E) {
-        self.apply(buffer, extra)
+    fn apply_once(mut self, buffer: &mut T, extra: &E, params: &mut P) {
+        self.apply(buffer, extra, params)
     }
 }
 
@@ -48,24 +48,24 @@ impl<P: DoubleBufferWriterPointer, O> OpWriter<P, O> {
         }
     }
 
-    pub fn swap_buffers<E: ?Sized>(&mut self, extra: &mut E)
+    pub fn swap_buffers<Params: ?Sized>(&mut self, params: &mut Params)
     where
         P::Strategy: BlockingStrategy + Strategy<SwapError = core::convert::Infallible>,
-        O: Operation<P::Buffer, E>,
+        O: Operation<P::Buffer, P::Extras, Params>,
     {
         let writer = self.writer.finish_swap();
-        swap_buffers(writer, &mut self.op_log, &mut self.water_line, extra);
+        swap_buffers(writer, &mut self.op_log, &mut self.water_line, params);
         self.writer.start_swap();
     }
 
-    pub async fn aswap_buffers<E: ?Sized>(&mut self, extra: &mut E)
+    pub async fn aswap_buffers<Params: ?Sized>(&mut self, params: &mut Params)
     where
         P::Strategy: AsyncStrategy + Strategy<SwapError = core::convert::Infallible>,
-        O: Operation<P::Buffer, E>,
+        O: Operation<P::Buffer, P::Extras, Params>,
     {
         let writer = self.writer.afinish_swap().await;
 
-        swap_buffers(writer, &mut self.op_log, &mut self.water_line, extra);
+        swap_buffers(writer, &mut self.op_log, &mut self.water_line, params);
         self.writer.start_swap();
     }
 
@@ -95,25 +95,31 @@ impl<P: DoubleBufferWriterPointer, O> Extend<O> for OpWriter<P, O> {
     }
 }
 
-fn swap_buffers<P: DoubleBufferWriterPointer, O: Operation<P::Buffer, E>, E: ?Sized>(
+fn swap_buffers<
+    P: DoubleBufferWriterPointer,
+    O: Operation<P::Buffer, P::Extras, Params>,
+    Params: ?Sized,
+>(
     writer: &mut raw::Writer<P>,
     op_log: &mut Vec<sync_wrapper::SyncWrapper<O>>,
     water_line: &mut usize,
-    extra: &mut E,
+    params: &mut Params,
 ) where
     P::Strategy: Strategy<SwapError = core::convert::Infallible>,
 {
-    let buffer = writer.get_mut();
+    let split = writer.split_mut();
+    let buffer = split.write;
+    let extras = split.extras;
 
     let water_line = &mut SetOnDrop::new(water_line).0;
     #[allow(clippy::arithmetic_side_effects)]
     for op in crate::vec_drain::drain_unti(op_log, ..*water_line) {
         *water_line -= 1;
-        op.into_inner().apply_once(buffer, extra);
+        op.into_inner().apply_once(buffer, extras, params);
     }
 
     for op in op_log.iter_mut() {
-        op.get_mut().apply(buffer, extra);
+        op.get_mut().apply(buffer, extras, params);
     }
 }
 

@@ -18,6 +18,7 @@ pub struct Reader<P, S: Strategy = <P as DoubleBufferReaderPointer>::Strategy> {
 /// cannot write to the corresponding buffer.
 pub struct ReaderGuard<'a, T: ?Sized, P: DoubleBufferWriterPointer> {
     ptr: RawReference<'a, T>,
+    extras: RawReference<'a, P::Extras>,
     raw: RawReaderGuard<'a, P>,
 }
 
@@ -91,10 +92,17 @@ impl<P: DoubleBufferReaderPointer> Reader<P> {
 
         let (reader, _) = data.buffers.get(swapped);
 
+        let extras = core::ptr::addr_of!(data.extras);
+
         Ok(ReaderGuard {
             ptr: RawReference {
                 // SAFETY: the pointer from ptr.buffers.get are always non-null
                 ptr: unsafe { NonNull::new_unchecked(reader.cast_mut()) },
+                lt: PhantomData,
+            },
+            extras: RawReference {
+                // SAFETY: references are always non-null, and extras is derived from a reference
+                ptr: unsafe { NonNull::new_unchecked(extras.cast_mut()) },
                 lt: PhantomData,
             },
             raw: RawReaderGuard {
@@ -153,6 +161,12 @@ impl<T: ?Sized, P: DoubleBufferWriterPointer> ops::Deref for ReaderGuard<'_, T, 
 }
 
 impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
+    pub const fn extras(&self) -> &P::Extras {
+        // SAFETY: extras is derived from a reference, which is bound to the lifetime
+        // 'a, so it is still valid.
+        unsafe { self.extras.ptr.as_ref() }
+    }
+
     /// Try to map the [`ReaderGuard`] to another value
     pub fn try_map<U: ?Sized, E>(
         self,
@@ -164,6 +178,7 @@ impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
                     ptr: NonNull::from(ptr),
                     lt: PhantomData,
                 },
+                extras: self.extras,
                 raw: self.raw,
             }),
             Err(err) => Err((self, err)),
@@ -173,6 +188,35 @@ impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
     /// Map the [`ReaderGuard`] to another value
     pub fn map<U: ?Sized>(self, f: impl FnOnce(&T) -> &U) -> ReaderGuard<'a, U, P> {
         match self.try_map::<_, core::convert::Infallible>(move |t| Ok(f(t))) {
+            Ok(guard) => guard,
+            Err((_, err)) => match err {},
+        }
+    }
+
+    /// Try to map the [`ReaderGuard`] to another value
+    pub fn try_map_with_extras<U: ?Sized, E>(
+        self,
+        f: impl for<'t> FnOnce(&'t T, &'t P::Extras) -> Result<&'t U, E>,
+    ) -> Result<ReaderGuard<'a, U, P>, (Self, E)> {
+        match f(&self, self.extras()) {
+            Ok(ptr) => Ok(ReaderGuard {
+                ptr: RawReference {
+                    ptr: NonNull::from(ptr),
+                    lt: PhantomData,
+                },
+                extras: self.extras,
+                raw: self.raw,
+            }),
+            Err(err) => Err((self, err)),
+        }
+    }
+
+    /// Map the [`ReaderGuard`] to another value
+    pub fn map_with_extras<U: ?Sized>(
+        self,
+        f: impl for<'t> FnOnce(&'t T, &'t P::Extras) -> &'t U,
+    ) -> ReaderGuard<'a, U, P> {
+        match self.try_map_with_extras::<_, core::convert::Infallible>(move |t, e| Ok(f(t, e))) {
             Ok(guard) => guard,
             Err((_, err)) => match err {},
         }
