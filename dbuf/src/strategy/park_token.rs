@@ -1,6 +1,6 @@
 use core::{
     cell::Cell,
-    task::{Context, RawWaker, RawWakerVTable, Waker},
+    task::{Context, Waker},
 };
 
 #[cfg(feature = "std")]
@@ -14,6 +14,22 @@ pub struct AdaptiveParkToken {
     pub(crate) thread_token: ThreadParkToken,
     pub(crate) async_token: AsyncParkToken,
 }
+
+// SAFETY: FlashStrategy ensures that all access to the park token
+// by the writer only happens when the residual is negative
+// and by readers when the residual is zero (and by only one reader)
+//
+// These two states are mutually disjoint, so they cannot race
+// All other parts of the FlashStrategy are trivially thread-safe
+unsafe impl Sync for ThreadParkToken {}
+
+// SAFETY: FlashStrategy ensures that all access to the park token
+// by the writer only happens when the residual is negative
+// and by readers when the residual is zero (and by only one reader)
+//
+// These two states are mutually disjoint, so they cannot race
+// All other parts of the FlashStrategy are trivially thread-safe
+unsafe impl Sync for AsyncParkToken {}
 
 mod seal {
     pub trait Seal {}
@@ -59,11 +75,11 @@ impl ThreadParkToken {
         Self(Cell::new(None))
     }
 
-    pub fn set(&self) {
+    pub(in crate::strategy) fn set(&self) {
         self.0.set(Some(std::thread::current()))
     }
 
-    pub fn clear(&self) {
+    pub(in crate::strategy) fn clear(&self) {
         self.0.set(None)
     }
 }
@@ -73,11 +89,11 @@ impl AsyncParkToken {
         Self(Cell::new(None))
     }
 
-    pub fn set(&self, ctx: &mut Context) {
+    pub(in crate::strategy) fn set(&self, ctx: &mut Context) {
         self.0.set(Some(ctx.waker().clone()))
     }
 
-    pub fn clear(&self) {
+    pub(in crate::strategy) fn clear(&self) {
         self.0.set(None);
     }
 }

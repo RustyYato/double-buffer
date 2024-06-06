@@ -31,15 +31,8 @@ const _: () = {
 
     let _ = send_sync::<FlashStrategy<ThreadParkToken>>;
     let _ = send_sync::<FlashStrategy<AsyncParkToken>>;
+    let _ = send_sync::<FlashStrategy<AdaptiveParkToken>>;
 };
-
-// SAFETY: FlashStrategy ensures that all access to the park token
-// by the writer only happens when the residual is negative
-// and by readers when the residual is zero (and by only one reader)
-//
-// These two states are mutually disjoint, so they cannot race
-// All other parts of the FlashStrategy are trivially thread-safe
-unsafe impl Sync for ThreadParkToken {}
 
 const NOT_SWAPPED: usize = 0;
 const SWAPPED: usize = 1;
