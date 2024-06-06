@@ -11,7 +11,7 @@ use hashbrown::HashTable;
 type TablePointer<T, S> = dbuf::triomphe::OffsetArc<
     dbuf::raw::DoubleBufferData<
         HashTable<T>,
-        dbuf::strategy::flashmap::FlashStrategy<dbuf::strategy::flashmap::AdaptiveParkToken>,
+        dbuf::strategy::flashmap::FlashStrategy<dbuf::strategy::park_token::AdaptiveParkToken>,
         S,
     >,
 >;

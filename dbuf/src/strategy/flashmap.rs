@@ -3,30 +3,21 @@
 //! see [`flashmap`](https://docs.rs/flashmap/latest/flashmap/) for more details
 
 use core::{
-    cell::Cell,
     mem::MaybeUninit,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
     task::Poll,
 };
-use std::{
-    sync::{Mutex, Once, PoisonError},
-    thread::Thread,
-};
+use std::sync::{Mutex, Once, PoisonError};
 
 use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
 
 use alloc::vec::Vec;
 use triomphe::Arc;
 
+use super::park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadParkToken};
+
 #[cfg(test)]
 mod test;
-
-pub struct ThreadParkToken(Cell<Option<Thread>>);
-pub struct AsyncParkToken(atomic_waker::AtomicWaker);
-pub struct AdaptiveParkToken {
-    thread_token: ThreadParkToken,
-    async_token: AsyncParkToken,
-}
 
 pub struct FlashStrategy<ParkToken> {
     swap_state: AtomicUsize,
@@ -106,7 +97,7 @@ impl Default for FlashStrategy<AdaptiveParkToken> {
     }
 }
 
-impl<ParkToken: self::Parker> FlashStrategy<ParkToken> {
+impl<ParkToken: Parker> FlashStrategy<ParkToken> {
     const fn with_park_token() -> Self {
         Self {
             swap_state: AtomicUsize::new(NOT_SWAPPED),
@@ -126,83 +117,6 @@ impl<ParkToken> FlashStrategy<ParkToken> {
     }
 }
 
-mod seal {
-    pub trait Seal {}
-}
-
-/// This is an internal trait, do not use it directly.
-///
-/// It only exists as an implementation detail to abstract over [`ThreadParkToken`],
-/// [`AsyncParkToken`], and [`AdaptiveParkToken`]
-///
-/// This trait is sealed, so you cannot implement this trait.
-///
-/// # Safety
-///
-/// ParkToken::wake must not unwind
-pub unsafe trait Parker: Sized + seal::Seal {
-    #[doc(hidden)]
-    const NEW: Self;
-
-    #[doc(hidden)]
-    unsafe fn wake(&self);
-}
-
-impl seal::Seal for ThreadParkToken {}
-// # SAFETY: thread::park doesn't unwind
-unsafe impl Parker for ThreadParkToken {
-    #[doc(hidden)]
-    const NEW: Self = ThreadParkToken(Cell::new(None));
-
-    #[doc(hidden)]
-    unsafe fn wake(&self) {
-        if let Some(thread) = self.0.take() {
-            thread.unpark()
-        }
-    }
-}
-
-impl seal::Seal for AsyncParkToken {}
-// SAFETY: there is a panic guard to ensure that wake doesn't unwind
-unsafe impl Parker for AsyncParkToken {
-    #[doc(hidden)]
-    const NEW: Self = AsyncParkToken(atomic_waker::AtomicWaker::new());
-
-    #[doc(hidden)]
-    unsafe fn wake(&self) {
-        struct Bomb;
-
-        impl Drop for Bomb {
-            fn drop(&mut self) {
-                panic!("Tried to panic out of an async Waker::wake")
-            }
-        }
-
-        let guard = Bomb;
-        self.0.wake();
-        core::mem::forget(guard);
-    }
-}
-
-impl seal::Seal for AdaptiveParkToken {}
-// # SAFETY: Parker::wake can't unwind for thread_token and async_token
-unsafe impl Parker for AdaptiveParkToken {
-    #[doc(hidden)]
-    const NEW: Self = AdaptiveParkToken {
-        thread_token: ThreadParkToken::NEW,
-        async_token: AsyncParkToken::NEW,
-    };
-
-    #[doc(hidden)]
-    unsafe fn wake(&self) {
-        // SAFETY: ensured by caller
-        unsafe {
-            self.thread_token.wake();
-            self.async_token.wake();
-        }
-    }
-}
-
 impl Swap {
     // This negation cannot overflow because swap.residual is always positive
     // and -isize::MAX does not overflow
@@ -217,7 +131,7 @@ impl Swap {
 // because finish_swap doesn't return while there are any readers in the
 // buffer that the writer (even if the readers are on other threads). see the module
 // docs for more information on the particular algorithm.
-unsafe impl<ParkToken: self::Parker> Strategy for FlashStrategy<ParkToken> {
+unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
     type WriterId = WriterId;
     type ReaderId = ReaderId;
 
@@ -362,9 +276,9 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
     ) -> Poll<()> {
         self.poll(swap, |should_set| {
             if should_set {
-                self.parker.0.register(ctx.waker())
+                self.parker.set(ctx)
             } else {
-                self.parker.0.take();
+                self.parker.clear();
             }
         })
     }
@@ -376,9 +290,9 @@ unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
         if self
             .poll(&mut swap, |should_set| {
                 if should_set {
-                    self.parker.0.set(Some(std::thread::current()))
+                    self.parker.set()
                 } else {
-                    self.parker.0.set(None);
+                    self.parker.clear();
                 }
             })
             .is_pending()
@@ -400,9 +314,9 @@ unsafe impl AsyncStrategy for FlashStrategy<AdaptiveParkToken> {
     ) -> Poll<()> {
         self.poll(swap, |should_set| {
             if should_set {
-                self.parker.async_token.0.register(ctx.waker())
+                self.parker.async_token.set(ctx)
             } else {
-                self.parker.async_token.0.take();
+                self.parker.async_token.clear();
             }
         })
     }
@@ -414,9 +328,9 @@ unsafe impl BlockingStrategy for FlashStrategy<AdaptiveParkToken> {
         if self
             .poll(&mut swap, |should_set| {
                 if should_set {
-                    self.parker.thread_token.0.set(Some(std::thread::current()))
+                    self.parker.thread_token.set()
                 } else {
-                    self.parker.thread_token.0.set(None);
+                    self.parker.thread_token.clear();
                 }
             })
             .is_pending()

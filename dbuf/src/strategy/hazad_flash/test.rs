@@ -5,7 +5,6 @@ use super::HazardFlashStrategy as FlashStrategy;
 use crate::{
     delay::DelayWriter,
     raw::{DoubleBufferData, Writer},
-    strategy::flashmap::AsyncParkToken,
 };
 
 use pollster::test as async_test;

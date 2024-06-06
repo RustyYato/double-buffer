@@ -5,7 +5,7 @@ use super::FlashStrategy;
 use crate::{
     delay::DelayWriter,
     raw::{DoubleBufferData, Writer},
-    strategy::flashmap::AsyncParkToken,
+    strategy::park_token::AsyncParkToken,
 };
 
 use pollster::test as async_test;
