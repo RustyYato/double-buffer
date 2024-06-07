@@ -105,20 +105,26 @@ pub unsafe trait Strategy {
 
     /// Creates a valid writer id for this strategy, and invalidates all writer ids
     /// and reader ids created by this strategy before this call to [`Self::create_writer_id`]
-    fn create_writer_id(&mut self) -> Self::WriterId;
+    ///
+    /// # Safety
+    ///
+    /// * If the output writer id is dropped, it must be dropped before the strategy is dropped
+    unsafe fn create_writer_id(&mut self) -> Self::WriterId;
 
     /// Creates a valid reader id from the provided writer id
     ///
     /// # Safety
     ///
-    /// The writer id must be valid for this strategy
+    /// * The writer id must be valid for this strategy
+    /// * If the output reader id is dropped, it must be dropped before the strategy is dropped
     unsafe fn create_reader_id_from_writer(&self, writer: &Self::WriterId) -> Self::ReaderId;
 
     /// Creates a valid reader id from the provided reader id
     ///
     /// # Safety
     ///
-    /// The reader id
+    /// * The input reader id must be valid for this strategy
+    /// * If the output reader id is dropped, it must be dropped before the strategy is dropped
     unsafe fn create_reader_id_from_reader(&self, reader: &Self::ReaderId) -> Self::ReaderId;
 
     /// Creates an invalid reader id

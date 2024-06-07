@@ -134,7 +134,7 @@ unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
     type ReadGuard = ReadGuard;
 
     #[inline]
-    fn create_writer_id(&mut self) -> Self::WriterId {
+    unsafe fn create_writer_id(&mut self) -> Self::WriterId {
         WriterId(())
     }
 

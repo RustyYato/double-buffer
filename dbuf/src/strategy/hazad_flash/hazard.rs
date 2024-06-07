@@ -2,6 +2,7 @@ use core::{
     alloc::Layout,
     iter::Flatten,
     marker::PhantomData,
+    num::NonZeroUsize,
     ptr::{self, NonNull},
     sync::atomic::Ordering,
 };
@@ -27,8 +28,11 @@ unsafe impl<T: Send, const N: usize> Send for Hazard<T, N> {}
 /// Hazard doesn't expose any functions &self -> &mut T, so T: Send isn't required
 unsafe impl<T: Send, const N: usize> Sync for Hazard<T, N> {}
 
+#[repr(align(8))]
 struct HazardNodeChunk<T, const N: usize> {
-    next: AtomicHazardPtr<T, N>,
+    // This ptr is only written to while HazardNodeChunk isn't shared
+    // so it doesn't need to be atomic
+    next: *mut HazardNodeChunk<T, N>,
     items: [CachePadded<HazardNode<T, N>>; N],
 }
 
@@ -49,6 +53,7 @@ struct HazardNode<T, const N: usize> {
 }
 
 pub struct RawHazardGuard<T, const N: usize> {
+    // This is a tagged pointer,
     node: NonNull<HazardNode<T, N>>,
 }
 
@@ -57,18 +62,101 @@ unsafe impl<T: Sync, const N: usize> Send for RawHazardGuard<T, N> {}
 /// SAFETY: `RawHazardGuard` is a just like &T so it has the same requirements
 unsafe impl<T: Sync, const N: usize> Sync for RawHazardGuard<T, N> {}
 
-impl<T, const N: usize> RawHazardGuard<T, N> {
-    pub unsafe fn as_ref(&self) -> &T {
-        unsafe { &(*self.node.as_ptr()).value }
-    }
+fn addr<T>(x: NonNull<T>) -> NonZeroUsize {
+    // SAFETY: transmuting from a pointer to a usize is safe
+    // it just drops the provenance of the pointer
+    unsafe { core::mem::transmute(x) }
 }
 
-impl<T, const N: usize> Drop for RawHazardGuard<T, N> {
-    fn drop(&mut self) {
+fn with_addr<T>(x: NonNull<T>, addr: NonZeroUsize) -> NonNull<T> {
+    let ptr = x.as_ptr();
+    let ptr = ptr
+        .wrapping_byte_sub(self::addr(x).get())
+        .wrapping_byte_add(addr.get());
+
+    // SAFETY: ^^^ sets the pointer's address to addr, which is non-zero
+    // so the pointer is non-null
+    unsafe { NonNull::new_unchecked(ptr) }
+}
+
+fn map_addr<T>(x: NonNull<T>, f: impl FnOnce(NonZeroUsize) -> NonZeroUsize) -> NonNull<T> {
+    with_addr(x, f(addr(x)))
+}
+
+impl<T, const N: usize> RawHazardGuard<T, N> {
+    /// Get a reference to the underlying value behind the guard
+    ///
+    /// # Safety
+    ///
+    /// The Hazard this guard was derived from must still be alive and this node must be locked
+    pub const unsafe fn as_ref(&self) -> &T {
+        let node = self.node.as_ptr().cast_const();
+        // SAFETY: The caller ensures that the Hazard is still alive
+        // The hazard never removes any nodes until drop so this node
+        // is still valid
+        unsafe { &(*node).value }
+    }
+
+    /// Tries to the lock on the node, returning true iff node was locked
+    ///
+    /// # Safety
+    ///
+    /// The Hazard this guard was derived from must still be alive
+    #[must_use]
+    pub unsafe fn try_acquire(&mut self) -> bool {
+        let node = map_addr(self.node, |addr| {
+            let addr = addr.get() & !1;
+            // SAFETY: self.node is aligned to 8 bytes
+            unsafe { NonZeroUsize::new_unchecked(addr) }
+        });
+
+        // SAFETY: The caller ensures that the Hazard is still alive
+        // The hazard never removes any nodes until drop so this node
+        // is still valid
+        let is_success = unsafe {
+            (*node.as_ptr())
+                .is_locked
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        };
+
+        if is_success {
+            self.node = node;
+        }
+
+        is_success
+    }
+
+    /// Releases the lock on the node
+    ///
+    /// # Safety
+    ///
+    /// The Hazard this guard was derived from must still be alive and this node must be
+    /// locked
+    pub unsafe fn release(&mut self) {
+        // SAFETY: The caller ensures that the Hazard is still alive
+        // The hazard never removes any nodes until drop so this node
+        // is still valid
+        // And this node must be locked, so
         unsafe {
             (*self.node.as_ptr())
                 .is_locked
                 .store(false, Ordering::Release);
+        }
+
+        self.node = map_addr(self.node, |x| x | 1);
+    }
+
+    /// Releases the lock on the node
+    ///
+    /// # Safety
+    ///
+    /// The Hazard this guard was derived from must still be alive
+    pub unsafe fn release_if_locked(&mut self) {
+        let is_locked = addr(self.node).get() & 1;
+        if is_locked == 0 {
+            // SAFETY: the Hazard this guard is locked
+            unsafe { self.release() }
         }
     }
 }
@@ -82,15 +170,13 @@ impl<T, const N: usize> Drop for Hazard<T, N> {
 
         let layout = Layout::new::<HazardNodeChunk<T, N>>();
         while let Some(mut chunk) = NonNull::new(current_chunk) {
-            #[cfg(not(loom))]
-            {
-                current_chunk = unsafe { *chunk.as_mut().next.get_mut() };
-            }
-            #[cfg(loom)]
-            {
-                current_chunk = unsafe { chunk.as_mut().next.with_mut(|x| *x) };
-            }
+            // SAFETY: We are in `Drop` and all RawHazardGuard are all released before hand or
+            // will not be touched after this. They are also not allowed to race with this drop
+            // so we have exclusive access to all chunks
+            current_chunk = unsafe { chunk.as_mut() }.next;
 
+            // SAFETY: layout is compatible with the allocation of a chunk
+            // and we have exclusive access to the chunk
             unsafe { alloc::alloc::dealloc(chunk.as_ptr().cast(), layout) }
         }
     }
@@ -158,6 +244,8 @@ impl<T, const N: usize> Hazard<T, N> {
     fn insert_with(&self, f: &mut dyn FnMut() -> T) -> RawHazardGuard<T, N> {
         let layout = Layout::new::<HazardNodeChunk<T, N>>();
         debug_assert_ne!(layout.size(), 0);
+        // SAFETY: Layout is guaranteed to be non-empty, because HazardNodeChunk contains a
+        // pointer
         let chunk = unsafe { alloc::alloc::alloc(layout) };
 
         let Some(chunk) = NonNull::new(chunk) else {
@@ -166,16 +254,19 @@ impl<T, const N: usize> Hazard<T, N> {
 
         let chunk = chunk.cast::<HazardNodeChunk<T, N>>();
 
-        unsafe {
-            core::ptr::addr_of_mut!((*chunk.as_ptr()).next).write(AtomicPtr::new(ptr::null_mut()))
-        }
+        // SAFETY: chunk was just allocated, and we checked the allocation is non-null
+        unsafe { core::ptr::addr_of_mut!((*chunk.as_ptr()).next).write(ptr::null_mut()) }
 
+        // SAFETY: chunk was just allocated, and we checked the allocation is non-null
         let items = unsafe { core::ptr::addr_of_mut!((*chunk.as_ptr()).items) };
         let items: *mut CachePadded<HazardNode<T, N>> = items.cast();
 
         for i in 0..N {
+            // SAFETY: chunk was just allocated, and we checked the allocation is non-null, we have
+            // allocated N items in the array
             let node: *mut HazardNode<T, N> = unsafe { items.add(i).cast() };
 
+            // SAFETY: the node above is valid for writes since we got it from the global allocator
             unsafe {
                 node.write(HazardNode {
                     is_locked: AtomicBool::new(false),
@@ -186,16 +277,20 @@ impl<T, const N: usize> Hazard<T, N> {
 
         // lock the first item on creation
         let first_node: *mut HazardNode<T, N> = items.cast();
+        // SAFETY: There is at least one element in the list, since we checked that N is non-zero
+        // in the constructor
         unsafe { (*first_node).is_locked = AtomicBool::new(true) }
 
         self.head
+            // SAFETY: chunk was just allocated, and we checked the allocation is non-null
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |prev_head| unsafe {
-                (*chunk.as_ptr()).next = AtomicPtr::new(prev_head);
+                (*chunk.as_ptr()).next = prev_head;
                 Some(chunk.as_ptr())
             })
             .unwrap();
 
         RawHazardGuard {
+            // SAFETY: chunk was just allocated, and we checked the allocation is non-null
             node: unsafe { NonNull::new_unchecked(first_node) },
         }
     }
@@ -231,8 +326,10 @@ impl<'a, T, const N: usize> Iterator for HazardChunkIter<'a, T, N> {
     type Item = &'a HazardNodeChunk<T, N>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: This iterator is constructed from a Hazard, and the lifetime ensures that
+        // the Hazard is still alive, so every node in the chunk linked list is valid
         let current = unsafe { self.current?.as_ref() };
-        self.current = NonNull::new(current.next.load(Ordering::Relaxed));
+        self.current = NonNull::new(current.next);
         Some(current)
     }
 }
@@ -267,6 +364,7 @@ fn test_basic() {
 
     assert_no_dups([a.node, b.node, c.node, d.node, e.node]);
 
+    // SAFETY: the hazard is still alive
     unsafe {
         assert_eq!(*a.as_ref(), 0);
         assert_eq!(*b.as_ref(), 0);
@@ -275,12 +373,14 @@ fn test_basic() {
         assert_eq!(*e.as_ref(), 1);
     }
 
-    drop(b);
+    // SAFETY: the hazard is still alive
+    unsafe { { b }.release_if_locked() }
     let f = hazard.get_or_insert_with(|| panic!());
     let g = hazard.get_or_insert_with(|| panic!());
     let h = hazard.get_or_insert_with(|| panic!());
     let i = hazard.get_or_insert_with(|| panic!());
 
+    // SAFETY: the hazard is still alive
     unsafe {
         assert_eq!(*a.as_ref(), 0);
         assert_eq!(*c.as_ref(), 0);
@@ -292,12 +392,18 @@ fn test_basic() {
         assert_eq!(*i.as_ref(), 0);
     }
 
-    drop((a, c, d));
+    // SAFETY: the hazard is still alive
+    unsafe {
+        { a }.release_if_locked();
+        { c }.release_if_locked();
+        { d }.release_if_locked();
+    }
 
     let j = hazard.get_or_insert_with(|| panic!());
     let k = hazard.get_or_insert_with(|| panic!());
     let l = hazard.get_or_insert_with(|| panic!());
 
+    // SAFETY: the hazard is still alive
     unsafe {
         assert_eq!(*e.as_ref(), 1);
         assert_eq!(*f.as_ref(), 1);

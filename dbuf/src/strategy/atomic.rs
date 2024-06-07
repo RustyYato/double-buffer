@@ -43,7 +43,7 @@ unsafe impl Strategy for AtomicStrategy {
     type ReadGuard = bool;
 
     #[inline]
-    fn create_writer_id(&mut self) -> Self::WriterId {}
+    unsafe fn create_writer_id(&mut self) -> Self::WriterId {}
 
     #[inline]
     unsafe fn create_reader_id_from_writer(&self, _writer: &Self::WriterId) -> Self::ReaderId {}

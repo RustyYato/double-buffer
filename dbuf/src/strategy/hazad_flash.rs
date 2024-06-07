@@ -125,7 +125,19 @@ impl<P: Parker> HazardFlashStrategy<P> {
             .id
             .get_mut()
             .get_or_insert_with(|| self.readers.get_or_insert_with(|| AtomicUsize::new(0)));
+        // SAFETY: the hazard is still alive, since the HazardFlashStrategy contains it
         unsafe { reader_id.as_ref() }
+    }
+}
+
+impl Drop for ReaderId {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.get_mut() {
+            // SAFETY: The reader is is only created in create_reader_id_from_* which require the
+            // id is dropped before the strategy, so if we have reached this point then
+            // the Hazard is still alive, which keeps all the nodes alive
+            unsafe { id.release_if_locked() }
+        }
     }
 }
 
@@ -143,7 +155,7 @@ unsafe impl<P: Parker> Strategy for HazardFlashStrategy<P> {
     type ReadGuard = ReadGuard;
 
     #[inline]
-    fn create_writer_id(&mut self) -> Self::WriterId {
+    unsafe fn create_writer_id(&mut self) -> Self::WriterId {
         WriterId(())
     }
 

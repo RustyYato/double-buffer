@@ -19,7 +19,9 @@ pub struct Writer<
 
 /// Create a new [`Writer`]
 pub fn new_writer<T: IntoDoubleBufferWriterPointer>(mut ptr: T) -> Writer<T::Writer> {
-    let id = ptr.strategy.create_writer_id();
+    // SAFETY: The writer id is dropped before the pointer, and the pointer keeps the strategy
+    // alive
+    let id = unsafe { ptr.strategy.create_writer_id() };
     let ptr = ptr.into_writer();
 
     Writer { id, ptr }

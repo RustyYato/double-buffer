@@ -7,9 +7,12 @@ use core::{
 use std::thread::Thread;
 
 #[cfg(feature = "std")]
+#[derive(Default)]
 pub struct ThreadParkToken(Cell<Option<Thread>>);
+#[derive(Default)]
 pub struct AsyncParkToken(Cell<Option<Waker>>);
 #[cfg(feature = "std")]
+#[derive(Default)]
 pub struct AdaptiveParkToken {
     pub(crate) thread_token: ThreadParkToken,
     pub(crate) async_token: AsyncParkToken,
@@ -55,8 +58,8 @@ pub unsafe trait Parker: Sized + seal::Seal {
 
 #[cfg(feature = "std")]
 impl seal::Seal for ThreadParkToken {}
-// # SAFETY: thread::park doesn't unwind
 #[cfg(feature = "std")]
+// SAFETY: thread::park doesn't unwind
 unsafe impl Parker for ThreadParkToken {
     #[doc(hidden)]
     const NEW: Self = ThreadParkToken(Cell::new(None));
@@ -124,8 +127,8 @@ unsafe impl Parker for AsyncParkToken {
 
 #[cfg(feature = "std")]
 impl seal::Seal for AdaptiveParkToken {}
-// # SAFETY: Parker::wake can't unwind for thread_token and async_token
 #[cfg(feature = "std")]
+// SAFETY: Parker::wake can't unwind for thread_token and async_token
 unsafe impl Parker for AdaptiveParkToken {
     #[doc(hidden)]
     const NEW: Self = AdaptiveParkToken {
