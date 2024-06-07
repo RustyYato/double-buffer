@@ -416,6 +416,39 @@ fn test_basic() {
     }
 }
 
+#[test]
+fn test_reuse_and_chunk_count() {
+    let hazard = Hazard::<u8, 1>::new();
+
+    let count_chunks = || hazard.chunks(Ordering::Relaxed).count();
+    assert_eq!(count_chunks(), 0);
+
+    let mut node = hazard.get_or_insert_with(|| 0);
+
+    assert_eq!(count_chunks(), 1);
+
+    // SAFETY: the hazard is still alive
+    unsafe { node.release() }
+
+    // the node above got reused
+    let mut node2 = hazard.get_or_insert_with(|| panic!());
+
+    // SAFETY: the hazard is still alive
+    assert!(unsafe { !node.try_acquire() });
+
+    // SAFETY: the hazard is still alive
+    unsafe { node2.release() }
+
+    // SAFETY: the hazard is still alive
+    assert!(unsafe { node.try_acquire() });
+
+    assert_eq!(count_chunks(), 1);
+
+    let _node2 = hazard.get_or_insert_with(|| 1);
+
+    assert_eq!(count_chunks(), 2);
+}
+
 #[cfg(loom)]
 #[test]
 fn test_loom_simple() {
