@@ -20,8 +20,12 @@ pub struct Hazard<T, const N: usize> {
     head: AtomicHazardPtr<T, N>,
 }
 
+/// SAFETY: Hazard drops all T's, so Hazard: Send only if T: Send
 unsafe impl<T: Send, const N: usize> Send for Hazard<T, N> {}
-unsafe impl<T: Send + Send, const N: usize> Sync for Hazard<T, N> {}
+/// SAFETY: Hazard exposes get_or_insert_with, which is &self -> &T, so
+/// Hazard: Sync only if T: Sync
+/// Hazard doesn't expose any functions &self -> &mut T, so T: Send isn't required
+unsafe impl<T: Send, const N: usize> Sync for Hazard<T, N> {}
 
 struct HazardNodeChunk<T, const N: usize> {
     next: AtomicHazardPtr<T, N>,
@@ -48,7 +52,9 @@ pub struct RawHazardGuard<T, const N: usize> {
     node: NonNull<HazardNode<T, N>>,
 }
 
-unsafe impl<T: Send, const N: usize> Send for RawHazardGuard<T, N> {}
+/// SAFETY: `RawHazardGuard` is a just like &T so it has the same requirements
+unsafe impl<T: Sync, const N: usize> Send for RawHazardGuard<T, N> {}
+/// SAFETY: `RawHazardGuard` is a just like &T so it has the same requirements
 unsafe impl<T: Sync, const N: usize> Sync for RawHazardGuard<T, N> {}
 
 impl<T, const N: usize> RawHazardGuard<T, N> {
