@@ -66,6 +66,7 @@ fn test() {
 
 #[test]
 #[cfg(feature = "std")]
+#[cfg_attr(miri, ignore)]
 fn test_mt() {
     let counter = core::sync::atomic::AtomicU32::new(0);
     std::thread::scope(|s| {

@@ -225,18 +225,46 @@ unsafe impl<P: Parker> Strategy for HazardFlashStrategy<P> {
 
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard {
         let swap_state = self.swap_state.load(Ordering::Acquire);
-        let reader_id = self.reader_id(reader);
+        let reader_id = if let Some(reader_id) = reader.id.get_mut() {
+            // SAFETY: reader is associated from the this HazardFlashStrategy
+            // so the RawHazardGuard is still valid
+            if unsafe { reader_id.try_acquire() } {
+                // SAFETY: reader is associated from the this HazardFlashStrategy
+                // so the RawHazardGuard is still valid
+                unsafe { reader_id.as_ref() }
+            } else {
+                self.reader_id(reader)
+            }
+        } else {
+            self.reader_id(reader)
+        };
+
         assert_eq!(
             reader_id.load(Ordering::Relaxed) & READER_ACTIVE,
             0,
             "Detected a leaked read guard"
         );
+
         reader_id.store(swap_state | READER_ACTIVE, Ordering::Release);
         ReadGuard { swap_state }
     }
 
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, _guard: Self::ReadGuard) {
-        let reader_id = self.reader_id(reader);
+        struct DropGuard<'a, T, const N: usize>(&'a mut hazard::RawHazardGuard<T, N>);
+
+        impl<T, const N: usize> Drop for DropGuard<'_, T, N> {
+            fn drop(&mut self) {
+                // SAFETY: the reader was previously acquired, so it must be locked
+                unsafe { self.0.release() }
+            }
+        }
+
+        let reader_guard = reader.id.get_mut().as_mut_slice();
+        // SAFETY: the reader was previously acquired, so this must be Some
+        let reader_guard = unsafe { reader_guard.get_unchecked_mut(0) };
+        let reader_guard = DropGuard(reader_guard);
+        // SAFETY: the reader was previously acquired, so it must be locked
+        let reader_id = unsafe { reader_guard.0.as_ref() };
         let reader_swap_state =
             reader_id.fetch_xor(READER_ACTIVE, Ordering::Release) ^ READER_ACTIVE;
         let swap_state = self.swap_state.load(Ordering::Acquire);
