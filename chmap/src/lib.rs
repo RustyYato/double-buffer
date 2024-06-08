@@ -3,6 +3,7 @@
 use std::{
     borrow::Borrow,
     hash::{BuildHasher, Hash, RandomState},
+    ops::Deref,
 };
 
 use hashbrown::HashTable;
@@ -16,6 +17,7 @@ type TablePointer<T, S> = dbuf::triomphe::OffsetArc<
     >,
 >;
 
+#[allow(clippy::type_complexity)]
 pub struct Writer<'env, K, V, S = RandomState> {
     writer: dbuf::op::OpWriter<TablePointer<(K, V), S>, HashTableOperation<'env, K, V, S>>,
 }
@@ -24,12 +26,21 @@ pub struct Reader<K, V, S> {
     reader: dbuf::raw::Reader<TablePointer<(K, V), S>>,
 }
 
+#[allow(clippy::type_complexity)]
 pub struct TableGuard<'a, K, V, S> {
     reader: dbuf::raw::ReaderGuard<'a, HashTable<(K, V)>, TablePointer<(K, V), S>>,
 }
 
 pub struct ReadGuard<'a, T: ?Sized, K, V, S> {
     reader: dbuf::raw::ReaderGuard<'a, T, TablePointer<(K, V), S>>,
+}
+
+impl<T: ?Sized, K, V, S> Deref for ReadGuard<'_, T, K, V, S> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.reader
+    }
 }
 
 pub enum HashTableOperation<'env, K, V, S> {
@@ -71,12 +82,13 @@ impl<'env, K, V, S> Writer<'env, K, V, S> {
             reader: self.writer.reader(),
         }
     }
+}
 
+impl<'env, K, V, S: BuildHasher> Writer<'env, K, V, S> {
     pub fn insert(&mut self, key: K, value: V)
     where
         K: Hash + Eq + Clone,
         V: Clone,
-        S: BuildHasher,
     {
         self.writer.push(HashTableOperation::Insert { key, value })
     }
@@ -85,16 +97,22 @@ impl<'env, K, V, S> Writer<'env, K, V, S> {
     where
         K: Hash + Eq + Clone,
         V: Clone,
-        S: BuildHasher,
     {
         self.writer.push(HashTableOperation::Remove { key })
     }
 
-    pub fn get_entry<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
-        S: BuildHasher,
+    {
+        self.get(key).is_some()
+    }
+
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        K: Borrow<Q>,
+        Q: ?Sized + Hash + Eq,
     {
         let map = self.writer.get();
         let hash = self.writer.extras().hash_one(key);
@@ -106,16 +124,14 @@ impl<'env, K, V, S> Writer<'env, K, V, S> {
     where
         K: Borrow<Q>,
         Q: ?Sized + Hash + Eq,
-        S: BuildHasher,
     {
-        self.get_entry(key).map(|(_, value)| value)
+        self.get_key_value(key).map(|(_, value)| value)
     }
 
     pub fn retain(&mut self, mut f: impl FnMut(&K, &mut V) -> bool + Send + 'env)
     where
         K: Hash + Eq + Clone,
         V: Clone,
-        S: BuildHasher,
     {
         self.writer.push(HashTableOperation::Custom {
             f: Box::new(move |_, table, _hasher| table.retain(|(key, value)| f(key, value))),
@@ -126,7 +142,6 @@ impl<'env, K, V, S> Writer<'env, K, V, S> {
     where
         K: Hash + Eq + Clone,
         V: Clone,
-        S: BuildHasher,
     {
         self.writer.swap_buffers(&mut ());
     }
@@ -140,12 +155,46 @@ impl<K, V, S> Reader<K, V, S> {
     }
 }
 
-impl<'a, K, V, S> TableGuard<'a, K, V, S> {
-    pub fn get<Q>(self, key: &Q) -> Result<ReadGuard<'a, V, K, V, S>, Self>
+impl<'a, K, V, S: BuildHasher> TableGuard<'a, K, V, S> {
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         Q: ?Sized + Hash + Eq,
         K: Borrow<Q>,
-        S: BuildHasher,
+    {
+        self.get(key).is_some()
+    }
+
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        Q: ?Sized + Hash + Eq,
+        K: Borrow<Q>,
+    {
+        let hash = self.reader.extras().hash_one(key);
+
+        match self.reader.find(hash, |(k, _)| k.borrow() == key) {
+            Some((_, v)) => Some(v),
+            None => None,
+        }
+    }
+
+    pub fn get_key_value<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        Q: ?Sized + Hash + Eq,
+        K: Borrow<Q>,
+    {
+        let hash = self.reader.extras().hash_one(key);
+
+        #[allow(clippy::manual_map)]
+        match self.reader.find(hash, |(k, _)| k.borrow() == key) {
+            Some((k, v)) => Some((k, v)),
+            None => None,
+        }
+    }
+
+    pub fn into_get<Q>(self, key: &Q) -> Result<ReadGuard<'a, V, K, V, S>, Self>
+    where
+        Q: ?Sized + Hash + Eq,
+        K: Borrow<Q>,
     {
         let mapped_guard = self.reader.try_map_with_extras(|table, hasher| {
             let hash = hasher.hash_one(key);
@@ -160,7 +209,9 @@ impl<'a, K, V, S> TableGuard<'a, K, V, S> {
             Err((reader, ())) => Err(TableGuard { reader }),
         }
     }
+}
 
+impl<'a, K, V, S> TableGuard<'a, K, V, S> {
     pub fn iter(&self) -> Iter<'_, K, V> {
         Iter {
             raw: self.reader.iter(),
