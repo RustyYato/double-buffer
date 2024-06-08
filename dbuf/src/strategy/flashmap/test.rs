@@ -72,7 +72,7 @@ async fn test_async() {
     // the swap passed to afinish_swap is the latest swap
     unsafe {
         let swap = writer.try_start_swap().unwrap();
-        writer.afinish_swap(swap).await;
+        writer.afinish_swap(&mut { swap }).await;
     }
 
     assert_eq!(*x, *writer.split().read);

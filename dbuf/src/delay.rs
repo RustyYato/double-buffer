@@ -119,7 +119,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         self.try_start_swap().expect("start swap must not fail")
     }
 
-    /// Finish an ongoing swap, and return a refernce to the underlying writer
+    /// Finish an ongoing swap, and return a reference to the underlying writer
     ///
     /// If there is no ongoing swap, then this is a no-op
     pub fn finish_swap(&mut self) -> &mut raw::Writer<P>
@@ -134,7 +134,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         &mut self.writer
     }
 
-    /// Finish an ongoing swap, and return a refernce to the underlying writer
+    /// Finish an ongoing swap, and return a reference to the underlying writer
     ///
     /// If there is no ongoing swap, then this is a no-op
     pub async fn afinish_swap(&mut self) -> &mut raw::Writer<P>
@@ -146,7 +146,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
         // next time this function is called
         if let Some(ref mut swap) = self.swap {
             // SAFETY: this swap is the latest swap
-            unsafe { self.writer.try_afinish_swap(swap) }.await;
+            unsafe { self.writer.afinish_swap(swap) }.await;
             // afinish_swap is driven to completion so now it's safe to clear the swap
             self.swap = None;
         }

@@ -28,5 +28,5 @@ async fn smoke() {
     assert!(unsafe { writer.is_swap_finished(&mut swap) });
 
     // SAFETY: the swap is the latest swap
-    unsafe { writer.afinish_swap(swap).await }
+    unsafe { writer.afinish_swap(&mut { swap }).await };
 }

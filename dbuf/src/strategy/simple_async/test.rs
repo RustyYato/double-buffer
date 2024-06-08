@@ -33,7 +33,7 @@ async fn smoke() {
     assert!(unsafe { writer.is_swap_finished(&mut swap) });
 
     // SAFETY: the swap is the latest swap
-    unsafe { writer.afinish_swap(swap).await }
+    unsafe { writer.afinish_swap(&mut { swap }).await }
 }
 
 #[async_test]
@@ -52,7 +52,8 @@ async fn test_double_swap() {
     // SAFETY: afinish_swap is called before split_mut or get_mut
     unsafe {
         let swap = writer.try_start_swap().unwrap();
-        writer.afinish_swap(swap).await;
+        // SAFETY: the swap is the latest swap
+        unsafe { writer.afinish_swap(&mut { swap }).await }
     }
 
     assert_eq!(*x, *writer.split().read);

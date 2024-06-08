@@ -196,27 +196,9 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
         core::mem::forget(no_unwind);
     }
 
-    /// Finish an ongoing swap
-    ///
-    /// If you are using a blocking strategy, use [`Self::finish_swap`]
-    ///
-    /// # Safety
-    ///
-    /// This swap should be the latest one created from [`Self::try_start_swap`]
-    ///
-    /// This future should be driven to completion before calling any mutable methods on self
-    pub async unsafe fn afinish_swap(&mut self, mut swap: iface::Swap<P::Strategy>)
-    where
-        P::Strategy: AsyncStrategy,
-    {
-        // SAFETY: the caller ensures that this is the latest swap
-        unsafe { self.try_afinish_swap(&mut swap).await };
-    }
-
     /// Try to finish a swap
     ///
-    /// This is an internal implementation detail that [`DelayWriter`] uses.
-    /// It is not meant to be exposed to the user, and  users should only use [`Self::afinish_swap`]
+    /// If you are using a blocking strategy, use [`Self::finish_swap`]
     ///
     /// # Safety
     ///
@@ -224,8 +206,8 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     ///
     /// This future should be driven to completion before calling any mutable methods on self
     /// or this the swap should be completed via one of the other methods
-    /// ([`Self::afinish_swap`], [`Self::finish_swap`])
-    pub(crate) async unsafe fn try_afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
+    /// ([`Self::afinish_swap`], [`Self::finish_swap`], another call to [`Self::afinish_swap`])
+    pub async unsafe fn afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
     where
         P::Strategy: AsyncStrategy,
     {
@@ -255,17 +237,6 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
                         core::task::Poll::Ready(())
                     } else {
                         this.strategy.register_context(this.id, this.swap, cx)
-                    }
-                }
-            }
-        }
-
-        impl<S: AsyncStrategy> Drop for WaitForSwap<'_, S> {
-            fn drop(&mut self) {
-                // SAFETY: this self.id is valid and swap was created from this id
-                unsafe {
-                    while !self.strategy.is_swap_finished(self.id, self.swap) {
-                        core::hint::spin_loop()
                     }
                 }
             }
