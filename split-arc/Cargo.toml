@@ -1,0 +1,12 @@
+[package]
+name = "split-arc"
+version = "0.1.0"
+edition = "2021"
+
+[target."cfg(loom)".dependencies.loom]
+version = "0.7"
+features = ["checkpoint"]
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }
+

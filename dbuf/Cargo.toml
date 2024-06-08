@@ -34,5 +34,5 @@ version = "0.3"
 features = ["macro"]
 
 [lints.rust]
- unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }
 
