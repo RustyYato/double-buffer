@@ -3,11 +3,10 @@
 //! see [`flashmap`](https://docs.rs/flashmap/latest/flashmap/) for more details
 
 use core::{
-    mem::MaybeUninit,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
     task::Poll,
 };
-use std::sync::{Mutex, Once, PoisonError};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
 
@@ -151,19 +150,13 @@ unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
     #[cold]
     #[inline(never)]
     fn create_invalid_reader_id() -> Self::ReaderId {
-        static mut INVALID: MaybeUninit<Arc<AtomicUsize>> = MaybeUninit::uninit();
-        static ONCE: Once = Once::new();
+        static INVALID: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
 
-        // SAFETY: ONCE ensures that there are no races on the write to INVALID
-        // and that INVALID is initialized before ONCE.call_once_force completes
-        ONCE.call_once_force(|_| unsafe {
-            INVALID = MaybeUninit::new(Arc::new(AtomicUsize::new(0)));
-        });
+        let invalid = INVALID.get_or_init(|| Arc::new(AtomicUsize::new(0)));
 
-        // SAFETY: INVALID was initialized just above in the ONCE
-        let arc = unsafe { &*INVALID.as_ptr() };
-
-        ReaderId { id: arc.clone() }
+        ReaderId {
+            id: invalid.clone(),
+        }
     }
 
     unsafe fn is_swapped_writer(&self, _writer: &Self::WriterId) -> bool {

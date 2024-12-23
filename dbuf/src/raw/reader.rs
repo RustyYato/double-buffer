@@ -37,22 +37,19 @@ impl<P: Copy + DoubleBufferReaderPointer> Copy for Reader<P> where ReaderId<P::S
 
 /// SAFETY: [`RawReference`] is semantically equivalent to a [`&T`] but without
 /// the validity requirements
-unsafe impl<'a, T: ?Sized> Send for RawReference<'a, T> where T: Sync {}
+unsafe impl<T: ?Sized> Send for RawReference<'_, T> where T: Sync {}
 /// SAFETY: [`RawReference`] is semantically equivalent to a [`&T`] but without
 /// the validity requirements
-unsafe impl<'a, T: ?Sized> Sync for RawReference<'a, T> where T: Sync {}
-impl<'a, T: ?Sized> core::panic::UnwindSafe for RawReference<'a, T> where
-    T: core::panic::RefUnwindSafe
-{
-}
-impl<'a, T: ?Sized> core::panic::RefUnwindSafe for RawReference<'a, T> where
+unsafe impl<T: ?Sized> Sync for RawReference<'_, T> where T: Sync {}
+impl<T: ?Sized> core::panic::UnwindSafe for RawReference<'_, T> where T: core::panic::RefUnwindSafe {}
+impl<T: ?Sized> core::panic::RefUnwindSafe for RawReference<'_, T> where
     T: core::panic::RefUnwindSafe
 {
 }
 
-impl<'a, P: DoubleBufferWriterPointer> core::panic::UnwindSafe for RawReaderGuard<'a, P> {}
-impl<'a, P: DoubleBufferWriterPointer> core::panic::RefUnwindSafe for RawReaderGuard<'a, P> {}
-impl<'a, P: DoubleBufferWriterPointer> core::marker::Unpin for RawReaderGuard<'a, P> {}
+impl<P: DoubleBufferWriterPointer> core::panic::UnwindSafe for RawReaderGuard<'_, P> {}
+impl<P: DoubleBufferWriterPointer> core::panic::RefUnwindSafe for RawReaderGuard<'_, P> {}
+impl<P: DoubleBufferWriterPointer> core::marker::Unpin for RawReaderGuard<'_, P> {}
 
 impl<P: DoubleBufferWriterPointer> Drop for RawReaderGuard<'_, P> {
     fn drop(&mut self) {

@@ -40,7 +40,7 @@ impl<P: DoubleBufferWriterPointer, O> From<DelayWriter<P>> for OpWriter<P, O> {
 }
 
 impl<P: DoubleBufferWriterPointer, O> OpWriter<P, O> {
-    pub fn from_writer(writer: DelayWriter<P>) -> Self {
+    pub const fn from_writer(writer: DelayWriter<P>) -> Self {
         Self {
             writer,
             op_log: Vec::new(),

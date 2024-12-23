@@ -57,13 +57,13 @@ pub enum HashTableOperation<'env, K, V, S> {
     },
 }
 
-impl<'env, K, V> Writer<'env, K, V> {
+impl<K, V> Writer<'_, K, V> {
     pub fn new() -> Self {
         Self::with_hasher(RandomState::new())
     }
 }
 
-impl<'env, K, V, S> Writer<'env, K, V, S> {
+impl<K, V, S> Writer<'_, K, V, S> {
     pub fn with_hasher(hasher: S) -> Self {
         Self {
             writer: dbuf::op::OpWriter::from(dbuf::raw::Writer::new(
@@ -211,7 +211,7 @@ impl<'a, K, V, S: BuildHasher> TableGuard<'a, K, V, S> {
     }
 }
 
-impl<'a, K, V, S> TableGuard<'a, K, V, S> {
+impl<K, V, S> TableGuard<'_, K, V, S> {
     pub fn iter(&self) -> Iter<'_, K, V> {
         Iter {
             raw: self.reader.iter(),
@@ -219,7 +219,7 @@ impl<'a, K, V, S> TableGuard<'a, K, V, S> {
     }
 }
 
-impl<'a, T: ?Sized, K, V, S> ReadGuard<'a, T, K, V, S> {}
+impl<T: ?Sized, K, V, S> ReadGuard<'_, T, K, V, S> {}
 
 pub struct Iter<'a, K, V> {
     raw: hashbrown::hash_table::Iter<'a, (K, V)>,
