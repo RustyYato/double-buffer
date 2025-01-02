@@ -8,6 +8,7 @@ use core::{
 };
 
 use alloc::alloc::handle_alloc_error;
+use const_fn::const_fn;
 use crossbeam_utils::CachePadded;
 
 #[cfg(not(loom))]
@@ -183,19 +184,8 @@ impl<T, const N: usize> Drop for Hazard<T, N> {
 }
 
 impl<T, const N: usize> Hazard<T, N> {
-    #[cfg(not(loom))]
+    #[const_fn(cfg(not(loom)))]
     pub const fn new() -> Self {
-        assert!(N != 0, "Cannot set batch size to zero");
-        // since this is internal only, just assert that T doesn't need drop
-        // to make Drop for Hazard<T, N> simpler
-        const { assert!(!core::mem::needs_drop::<T>()) };
-        Self {
-            head: AtomicHazardPtr::new(ptr::null_mut()),
-        }
-    }
-
-    #[cfg(loom)]
-    pub fn new() -> Self {
         assert!(N != 0, "Cannot set batch size to zero");
         // since this is internal only, just assert that T doesn't need drop
         // to make Drop for Hazard<T, N> simpler

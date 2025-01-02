@@ -93,7 +93,7 @@ fn test() {
 
         let b = arc.split();
         loom::thread::spawn(|| {
-            let c = b.try_split();
+            let _c = b.try_split();
             drop(b);
         });
 

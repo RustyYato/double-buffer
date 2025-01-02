@@ -8,6 +8,7 @@ use core::{
     task::Poll,
 };
 
+use const_fn::const_fn;
 use sync_wrapper::SyncWrapper;
 
 #[cfg(feature = "std")]
@@ -50,6 +51,7 @@ pub struct Swap {
 }
 
 impl HazardFlashStrategy<AsyncParkToken> {
+    #[const_fn(cfg(not(loom)))]
     pub const fn new_async() -> Self {
         Self::with_parker()
     }
@@ -57,6 +59,7 @@ impl HazardFlashStrategy<AsyncParkToken> {
 
 #[cfg(feature = "std")]
 impl HazardFlashStrategy<ThreadParkToken> {
+    #[const_fn(cfg(not(loom)))]
     pub const fn new_blocking() -> Self {
         Self::with_parker()
     }
@@ -64,12 +67,14 @@ impl HazardFlashStrategy<ThreadParkToken> {
 
 #[cfg(feature = "std")]
 impl HazardFlashStrategy<AdaptiveParkToken> {
+    #[const_fn(cfg(not(loom)))]
     pub const fn new() -> Self {
         Self::with_parker()
     }
 }
 
 impl<P: Parker> HazardFlashStrategy<P> {
+    #[const_fn(cfg(not(loom)))]
     const fn with_parker() -> Self {
         Self {
             swap_state: AtomicUsize::new(NOT_SWAPPED),

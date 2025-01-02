@@ -14,6 +14,7 @@ triomphe = ["dep:triomphe"]
 [dependencies]
 sync_wrapper = "1"
 crossbeam-utils = { version = "0.8.20", default-features = false }
+const_fn = "0.4.10"
 
 [dependencies.rc-box]
 optional = true
@@ -35,4 +36,3 @@ features = ["macro"]
 
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(loom)'] }
-
