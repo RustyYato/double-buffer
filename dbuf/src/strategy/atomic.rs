@@ -6,26 +6,62 @@ use loom::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
 
+pub mod park_token;
+
+use park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadParkToken};
+
 #[cfg(test)]
 mod tests;
 
-pub struct AtomicStrategy {
+pub struct AtomicStrategy<P> {
     num_readers: [AtomicU64; 2],
     which: AtomicBool,
+    parker: P,
 }
 
-impl AtomicStrategy {
+impl AtomicStrategy<ThreadParkToken> {
+    pub const fn new_blocking() -> Self {
+        Self::with_park_token()
+    }
+}
+
+impl AtomicStrategy<AsyncParkToken> {
+    pub const fn new_async() -> Self {
+        Self::with_park_token()
+    }
+}
+
+impl AtomicStrategy<AdaptiveParkToken> {
+    pub const fn new() -> Self {
+        Self::with_park_token()
+    }
+}
+
+impl<P: Parker> AtomicStrategy<P> {
     #[inline]
     #[const_fn(cfg(not(loom)))]
-    pub const fn new() -> Self {
+    const fn with_park_token() -> Self {
         Self {
             num_readers: [AtomicU64::new(0), AtomicU64::new(0)],
             which: AtomicBool::new(false),
+            parker: P::NEW,
         }
     }
 }
 
-impl Default for AtomicStrategy {
+impl Default for AtomicStrategy<ThreadParkToken> {
+    fn default() -> Self {
+        Self::new_blocking()
+    }
+}
+
+impl Default for AtomicStrategy<AsyncParkToken> {
+    fn default() -> Self {
+        Self::new_async()
+    }
+}
+
+impl Default for AtomicStrategy<AdaptiveParkToken> {
     fn default() -> Self {
         Self::new()
     }
@@ -36,7 +72,7 @@ impl Default for AtomicStrategy {
 // If there are no readers currently reading from the buffer
 // then we can swap to that buffer. If there are any readers reading
 // from the buffer an error is returned, and no swap happens
-unsafe impl Strategy for AtomicStrategy {
+unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
     type WriterId = ();
     type ReaderId = ();
 
@@ -157,15 +193,59 @@ unsafe impl Strategy for AtomicStrategy {
     }
 }
 
-// // SAFETY: is_swap_finished always returns true
-// unsafe impl AsyncStrategy for AtomicStrategy {
-//     #[inline]
-//     unsafe fn register_context(
-//         &self,
-//         _writer: &mut Self::WriterId,
-//         _swap: &mut Self::Swap,
-//         _ctx: &mut core::task::Context<'_>,
-//     ) -> core::task::Poll<()> {
-//         core::task::Poll::Ready(())
-//     }
-// }
+// SAFETY: is_swap_finished always returns true
+unsafe impl AsyncStrategy for AtomicStrategy<AsyncParkToken> {
+    #[inline]
+    unsafe fn register_context(
+        &self,
+        writer: &mut Self::WriterId,
+        swap: &mut Self::Swap,
+        ctx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<()> {
+        // SAFETY: the caller ensures that writer and swap are valid
+        if unsafe { self.is_swap_finished(writer, swap) } {
+            core::task::Poll::Ready(())
+        } else {
+            self.parker.set(ctx);
+            core::task::Poll::Pending
+        }
+    }
+}
+
+// SAFETY: is_swap_finished always returns true
+unsafe impl BlockingStrategy for AtomicStrategy<ThreadParkToken> {
+    unsafe fn finish_swap(&self, writer: &mut Self::WriterId, mut swap: Self::Swap) {
+        self.parker
+            // SAFETY: the caller ensures that writer and swap are valid
+            .park_until(|| unsafe { self.is_swap_finished(writer, &mut swap) });
+    }
+}
+
+// SAFETY: is_swap_finished always returns true
+unsafe impl AsyncStrategy for AtomicStrategy<AdaptiveParkToken> {
+    #[inline]
+    unsafe fn register_context(
+        &self,
+        writer: &mut Self::WriterId,
+        swap: &mut Self::Swap,
+        ctx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<()> {
+        // SAFETY: the caller ensures that writer and swap are valid
+        if unsafe { self.is_swap_finished(writer, swap) } {
+            core::task::Poll::Ready(())
+        } else {
+            self.parker.async_token.set(ctx);
+            core::task::Poll::Pending
+        }
+    }
+}
+
+// SAFETY: is_swap_finished always returns true
+unsafe impl BlockingStrategy for AtomicStrategy<AdaptiveParkToken> {
+    unsafe fn finish_swap(&self, writer: &mut Self::WriterId, mut swap: Self::Swap) {
+        self.parker
+            .thread_token
+            // SAFETY: the caller ensures that writer and swap are valid
+            .park_until(|| unsafe { self.is_swap_finished(writer, &mut swap) });
+    }
+}

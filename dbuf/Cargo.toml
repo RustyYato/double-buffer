@@ -10,11 +10,13 @@ default = ["std", "triomphe"]
 std = ["alloc"]
 alloc = ["dep:rc-box"]
 triomphe = ["dep:triomphe"]
+# atomic-waker = ["dep:atomic-waker"]
 
 [dependencies]
 sync_wrapper = "1"
 crossbeam-utils = { version = "0.8.20", default-features = false }
 const_fn = "0.4.10"
+atomic-waker = { version = "1.1.2" }
 
 [dependencies.rc-box]
 optional = true
