@@ -63,7 +63,8 @@ unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferReaderPointer
     type Buffer = T;
     type Extras = Extras;
     type UpgradeError = core::convert::Infallible;
-    type MaybeBorrowed<'a> = Self
+    type MaybeBorrowed<'a>
+        = Self
     where
         Self: 'a;
 

@@ -13,7 +13,7 @@ use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
 use alloc::vec::Vec;
 use triomphe::Arc;
 
-use super::park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadParkToken};
+use super::flash_park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadParkToken};
 
 #[cfg(test)]
 mod test;

@@ -10,4 +10,4 @@ mod atomic;
 pub mod simple;
 pub mod simple_async;
 
-pub mod park_token;
+pub mod flash_park_token;

@@ -12,8 +12,8 @@ use const_fn::const_fn;
 use sync_wrapper::SyncWrapper;
 
 #[cfg(feature = "std")]
-use super::park_token::{AdaptiveParkToken, ThreadParkToken};
-use super::park_token::{AsyncParkToken, Parker};
+use super::flash_park_token::{AdaptiveParkToken, ThreadParkToken};
+use super::flash_park_token::{AsyncParkToken, Parker};
 
 #[cfg(test)]
 mod test;

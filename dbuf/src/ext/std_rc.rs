@@ -58,7 +58,8 @@ unsafe impl<T, S: Strategy, Extras: ?Sized> DoubleBufferReaderPointer
     type Extras = Extras;
 
     type UpgradeError = RcUpgradeError;
-    type MaybeBorrowed<'a> = Self::Writer
+    type MaybeBorrowed<'a>
+        = Self::Writer
     where
         Self: 'a;
 
