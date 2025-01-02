@@ -4,11 +4,11 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(loom)]
 use loom::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
+use crate::interface::Strategy;
 
 pub mod park_token;
 
-use park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadParkToken};
+use park_token::Parker;
 
 #[cfg(test)]
 mod tests;
@@ -16,22 +16,26 @@ mod tests;
 pub struct AtomicStrategy<P> {
     num_readers: [AtomicU64; 2],
     which: AtomicBool,
+    #[allow(unused)]
     parker: P,
 }
 
-impl AtomicStrategy<ThreadParkToken> {
+#[cfg(feature = "std")]
+impl AtomicStrategy<park_token::ThreadParkToken> {
     pub const fn new_blocking() -> Self {
         Self::with_park_token()
     }
 }
 
-impl AtomicStrategy<AsyncParkToken> {
+#[cfg(feature = "atomic-waker")]
+impl AtomicStrategy<park_token::AsyncParkToken> {
     pub const fn new_async() -> Self {
         Self::with_park_token()
     }
 }
 
-impl AtomicStrategy<AdaptiveParkToken> {
+#[cfg(feature = "atomic-waker")]
+impl AtomicStrategy<park_token::AdaptiveParkToken> {
     pub const fn new() -> Self {
         Self::with_park_token()
     }
@@ -40,6 +44,7 @@ impl AtomicStrategy<AdaptiveParkToken> {
 impl<P: Parker> AtomicStrategy<P> {
     #[inline]
     #[const_fn(cfg(not(loom)))]
+    #[allow(unused)]
     const fn with_park_token() -> Self {
         Self {
             num_readers: [AtomicU64::new(0), AtomicU64::new(0)],
@@ -49,19 +54,24 @@ impl<P: Parker> AtomicStrategy<P> {
     }
 }
 
-impl Default for AtomicStrategy<ThreadParkToken> {
+// #[cfg(feature = "std")]
+#[cfg(feature = "std")]
+impl Default for AtomicStrategy<park_token::ThreadParkToken> {
     fn default() -> Self {
         Self::new_blocking()
     }
 }
 
-impl Default for AtomicStrategy<AsyncParkToken> {
+#[cfg(feature = "atomic-waker")]
+impl Default for AtomicStrategy<park_token::AsyncParkToken> {
     fn default() -> Self {
         Self::new_async()
     }
 }
 
-impl Default for AtomicStrategy<AdaptiveParkToken> {
+#[cfg(feature = "std")]
+#[cfg(feature = "atomic-waker")]
+impl Default for AtomicStrategy<park_token::AdaptiveParkToken> {
     fn default() -> Self {
         Self::new()
     }
@@ -177,7 +187,13 @@ unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
-                Ok(_) => return swapped,
+                Ok(_) => {
+                    let current_swapped = !self.which.load(Ordering::Acquire);
+                    if current_swapped == swapped {
+                        return swapped;
+                    }
+                    reader_count.fetch_sub(1, Ordering::Release);
+                }
                 Err(current) => num_readers = current,
             }
 
@@ -193,8 +209,9 @@ unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
     }
 }
 
+#[cfg(feature = "atomic-waker")]
 // SAFETY: is_swap_finished always returns true
-unsafe impl AsyncStrategy for AtomicStrategy<AsyncParkToken> {
+unsafe impl crate::interface::AsyncStrategy for AtomicStrategy<park_token::AsyncParkToken> {
     #[inline]
     unsafe fn register_context(
         &self,
@@ -212,8 +229,9 @@ unsafe impl AsyncStrategy for AtomicStrategy<AsyncParkToken> {
     }
 }
 
+#[cfg(feature = "std")]
 // SAFETY: is_swap_finished always returns true
-unsafe impl BlockingStrategy for AtomicStrategy<ThreadParkToken> {
+unsafe impl crate::interface::BlockingStrategy for AtomicStrategy<park_token::ThreadParkToken> {
     unsafe fn finish_swap(&self, writer: &mut Self::WriterId, mut swap: Self::Swap) {
         self.parker
             // SAFETY: the caller ensures that writer and swap are valid
@@ -221,8 +239,10 @@ unsafe impl BlockingStrategy for AtomicStrategy<ThreadParkToken> {
     }
 }
 
+#[cfg(feature = "std")]
+#[cfg(feature = "atomic-waker")]
 // SAFETY: is_swap_finished always returns true
-unsafe impl AsyncStrategy for AtomicStrategy<AdaptiveParkToken> {
+unsafe impl crate::interface::AsyncStrategy for AtomicStrategy<park_token::AdaptiveParkToken> {
     #[inline]
     unsafe fn register_context(
         &self,
@@ -240,8 +260,10 @@ unsafe impl AsyncStrategy for AtomicStrategy<AdaptiveParkToken> {
     }
 }
 
+#[cfg(feature = "std")]
+#[cfg(feature = "atomic-waker")]
 // SAFETY: is_swap_finished always returns true
-unsafe impl BlockingStrategy for AtomicStrategy<AdaptiveParkToken> {
+unsafe impl crate::interface::BlockingStrategy for AtomicStrategy<park_token::AdaptiveParkToken> {
     unsafe fn finish_swap(&self, writer: &mut Self::WriterId, mut swap: Self::Swap) {
         self.parker
             .thread_token

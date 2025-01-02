@@ -5,18 +5,18 @@ edition = "2021"
 
 [features]
 
-default = ["std", "triomphe"]
+# default = ["std", "triomphe"]
 
 std = ["alloc"]
 alloc = ["dep:rc-box"]
 triomphe = ["dep:triomphe"]
-# atomic-waker = ["dep:atomic-waker"]
+atomic-waker = ["dep:atomic-waker"]
 
 [dependencies]
 sync_wrapper = "1"
 crossbeam-utils = { version = "0.8.20", default-features = false }
 const_fn = "0.4.10"
-atomic-waker = { version = "1.1.2" }
+atomic-waker = { version = "1.1.2", optional = true }
 
 [dependencies.rc-box]
 optional = true

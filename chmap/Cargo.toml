@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-dbuf.path = "../dbuf"
-hashbrown = "0.14"
+dbuf = { path = "../dbuf", features = ["std", "triomphe"] }
+hashbrown = "0.15.2"

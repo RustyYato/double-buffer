@@ -18,6 +18,7 @@ pub struct AdaptiveParkToken {
     pub(crate) async_token: AsyncParkToken,
 }
 
+#[cfg(feature = "std")]
 // SAFETY: FlashStrategy ensures that all access to the park token
 // by the writer only happens when the residual is negative
 // and by readers when the residual is zero (and by only one reader)
@@ -92,10 +93,12 @@ impl AsyncParkToken {
         Self(Cell::new(None))
     }
 
+    #[cfg(feature = "alloc")]
     pub(in crate::strategy) fn set(&self, ctx: &mut Context) {
         self.0.set(Some(ctx.waker().clone()))
     }
 
+    #[cfg(feature = "alloc")]
     pub(in crate::strategy) fn clear(&self) {
         self.0.set(None);
     }

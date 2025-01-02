@@ -2,7 +2,7 @@
 //!
 //! see [`flashmap`](https://docs.rs/flashmap/latest/flashmap/) for more details
 
-use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
+use crate::interface::{AsyncStrategy, Strategy};
 use core::{
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
     task::Poll,
@@ -30,6 +30,7 @@ pub struct HazardFlashStrategy<P> {
 const _: () = {
     const fn send_sync<T: Send + Sync>() {}
 
+    #[cfg(feature = "std")]
     let _ = send_sync::<HazardFlashStrategy<AdaptiveParkToken>>;
 };
 
@@ -314,8 +315,9 @@ unsafe impl AsyncStrategy for HazardFlashStrategy<AsyncParkToken> {
     }
 }
 
+#[cfg(feature = "std")]
 // SAFETY: we check if is_swap_finished would return true before returning
-unsafe impl BlockingStrategy for HazardFlashStrategy<ThreadParkToken> {
+unsafe impl crate::interface::BlockingStrategy for HazardFlashStrategy<ThreadParkToken> {
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
         if self
             .poll(&mut swap, |should_set| {
@@ -334,6 +336,7 @@ unsafe impl BlockingStrategy for HazardFlashStrategy<ThreadParkToken> {
     }
 }
 
+#[cfg(feature = "std")]
 // SAFETY: we check if is_swap_finished would return true before returning Poll::Ready
 unsafe impl AsyncStrategy for HazardFlashStrategy<AdaptiveParkToken> {
     unsafe fn register_context(
@@ -352,8 +355,9 @@ unsafe impl AsyncStrategy for HazardFlashStrategy<AdaptiveParkToken> {
     }
 }
 
+#[cfg(feature = "std")]
 // SAFETY: we check if is_swap_finished would return true before returning
-unsafe impl BlockingStrategy for HazardFlashStrategy<AdaptiveParkToken> {
+unsafe impl crate::interface::BlockingStrategy for HazardFlashStrategy<AdaptiveParkToken> {
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
         if self
             .poll(&mut swap, |should_set| {

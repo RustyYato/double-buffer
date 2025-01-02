@@ -1,9 +1,10 @@
-use core::{cell::Cell, task::Context};
+#[cfg(feature = "atomic-waker")]
+use core::task::Context;
 
-use std::sync::PoisonError;
 #[cfg(feature = "std")]
-use std::sync::{Condvar, Mutex};
+use std::sync::{Condvar, Mutex, PoisonError};
 
+#[cfg(feature = "atomic-waker")]
 use atomic_waker::AtomicWaker;
 
 #[cfg(feature = "std")]
@@ -12,9 +13,11 @@ pub struct ThreadParkToken {
     mutex: Mutex<()>,
     cv: Condvar,
 }
+#[cfg(feature = "atomic-waker")]
 #[derive(Default)]
 pub struct AsyncParkToken(AtomicWaker);
 #[cfg(feature = "std")]
+#[cfg(feature = "atomic-waker")]
 #[derive(Default)]
 pub struct AdaptiveParkToken {
     pub(crate) thread_token: ThreadParkToken,
@@ -40,6 +43,7 @@ pub unsafe trait Parker: Sized + seal::Seal {
     const NEW: Self;
 
     #[doc(hidden)]
+    #[allow(unused)]
     unsafe fn wake(&self);
 }
 
@@ -62,10 +66,6 @@ unsafe impl Parker for ThreadParkToken {
 
 #[cfg(feature = "std")]
 impl ThreadParkToken {
-    pub const fn new() -> Self {
-        Parker::NEW
-    }
-
     pub(super) fn park_until(&self, mut f: impl FnMut() -> bool) {
         let mut guard = self.mutex.lock().unwrap_or_else(PoisonError::into_inner);
         while !f() {
@@ -74,6 +74,7 @@ impl ThreadParkToken {
     }
 }
 
+#[cfg(feature = "atomic-waker")]
 impl AsyncParkToken {
     pub const fn new() -> Self {
         Self(AtomicWaker::new())
@@ -88,7 +89,9 @@ impl AsyncParkToken {
     }
 }
 
+#[cfg(feature = "atomic-waker")]
 impl seal::Seal for AsyncParkToken {}
+#[cfg(feature = "atomic-waker")]
 // SAFETY: there is a panic guard to ensure that wake doesn't unwind
 unsafe impl Parker for AsyncParkToken {
     #[doc(hidden)]
@@ -113,8 +116,10 @@ unsafe impl Parker for AsyncParkToken {
 }
 
 #[cfg(feature = "std")]
+#[cfg(feature = "atomic-waker")]
 impl seal::Seal for AdaptiveParkToken {}
 #[cfg(feature = "std")]
+#[cfg(feature = "atomic-waker")]
 // SAFETY: Parker::wake can't unwind for thread_token and async_token
 unsafe impl Parker for AdaptiveParkToken {
     #[doc(hidden)]
