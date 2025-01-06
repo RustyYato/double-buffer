@@ -146,10 +146,11 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     ///
     /// See the underlying strategy for details on when this may fail
     ///
-    /// # Safety
+    /// Note: you should not call `try_start_swap` twice, while it is not UB,
+    /// it may lead to unpredictiable behaviors, such as panics, dead-locks, and more.
     ///
-    /// [`Self::finish_swap`] must be called or [`Self::afinish_swap`] must be polled to completion
-    /// before you can call [`Self::split_mut`] or [`Self::get_mut`] again
+    /// If you find yourself reaching for `try_start_swap`, instead try using `DelayWriter`,
+    /// which provides a safe interface for `try_start_swap`
     ///
     /// # Safety
     ///

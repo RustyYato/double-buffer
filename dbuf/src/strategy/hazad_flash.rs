@@ -47,9 +47,8 @@ pub struct ReadGuard {
     swap_state: usize,
 }
 
-pub struct Swap {
-    residual: isize,
-}
+#[non_exhaustive]
+pub struct Swap;
 
 impl HazardFlashStrategy<AsyncParkToken> {
     #[const_fn(cfg(not(loom)))]
@@ -109,15 +108,6 @@ impl Default for HazardFlashStrategy<AdaptiveParkToken> {
     }
 }
 
-impl Swap {
-    // This negation cannot overflow because swap.residual is always positive
-    // and -isize::MAX does not overflow
-    #[inline]
-    #[allow(clippy::arithmetic_side_effects)]
-    const fn expected_residual(&self) -> isize {
-        -self.residual
-    }
-}
 impl<P: Parker> HazardFlashStrategy<P> {
     fn create_reader_id(&self) -> ReaderId {
         let id = self.readers.get_or_insert_with(|| AtomicUsize::new(0));
@@ -211,7 +201,7 @@ unsafe impl<P: Parker> Strategy for HazardFlashStrategy<P> {
         let mut residual = 0;
 
         for reader in self.readers.iter() {
-            let reader_swap_state = reader.load(Ordering::Acquire);
+            let reader_swap_state = reader.fetch_xor(1, Ordering::AcqRel);
 
             // This increment is bounded by the number of readers there are
             // which can never exceed isize::MAX (because of the max allocation
@@ -222,15 +212,16 @@ unsafe impl<P: Parker> Strategy for HazardFlashStrategy<P> {
             }
         }
 
-        Ok(Swap { residual })
+        self.residual.fetch_add(residual, Ordering::Release);
+
+        Ok(Swap)
     }
 
-    unsafe fn is_swap_finished(&self, _writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool {
-        self.residual.load(Ordering::Acquire) == swap.expected_residual()
+    unsafe fn is_swap_finished(&self, _writer: &mut Self::WriterId, Swap: &mut Self::Swap) -> bool {
+        self.residual.load(Ordering::Acquire) == 0
     }
 
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard {
-        let swap_state = self.swap_state.load(Ordering::Acquire);
         let reader_id = if let Some(reader_id) = reader.id.get_mut() {
             // SAFETY: reader is associated from the this HazardFlashStrategy
             // so the RawHazardGuard is still valid
@@ -251,11 +242,11 @@ unsafe impl<P: Parker> Strategy for HazardFlashStrategy<P> {
             "Detected a leaked read guard"
         );
 
-        reader_id.store(swap_state | READER_ACTIVE, Ordering::Release);
-        ReadGuard { swap_state }
+        let id = reader_id.fetch_or(READER_ACTIVE, Ordering::Release);
+        ReadGuard { swap_state: id }
     }
 
-    unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, _guard: Self::ReadGuard) {
+    unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, guard: Self::ReadGuard) {
         struct DropGuard<'a, T, const N: usize>(&'a mut hazard::RawHazardGuard<T, N>);
 
         impl<T, const N: usize> Drop for DropGuard<'_, T, N> {
@@ -271,12 +262,10 @@ unsafe impl<P: Parker> Strategy for HazardFlashStrategy<P> {
         let reader_guard = DropGuard(reader_guard);
         // SAFETY: the reader was previously acquired, so it must be locked
         let reader_id = unsafe { reader_guard.0.as_ref() };
-        let reader_swap_state =
-            reader_id.fetch_xor(READER_ACTIVE, Ordering::Release) ^ READER_ACTIVE;
-        let swap_state = self.swap_state.load(Ordering::Acquire);
+        let reader_swap_state = reader_id.fetch_and(!READER_ACTIVE, Ordering::Release);
 
         // if there wasn't any intervening swap then just return
-        if swap_state == reader_swap_state {
+        if guard.swap_state & 1 == reader_swap_state & 1 {
             return;
         }
 
@@ -377,20 +366,15 @@ unsafe impl crate::interface::BlockingStrategy for HazardFlashStrategy<AdaptiveP
 }
 
 impl<T> HazardFlashStrategy<T> {
-    fn poll(&self, swap: &mut Swap, mut setup: impl FnMut(bool)) -> Poll<()> {
-        if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
-            if swap.residual != 0 {
-                self.residual.fetch_add(swap.residual, Ordering::Release);
-            }
+    fn poll(&self, Swap: &mut Swap, mut setup: impl FnMut(bool)) -> Poll<()> {
+        if self.residual.load(Ordering::Acquire) == 0 {
             return Poll::Ready(());
         }
 
-        let expected_residual = swap.expected_residual();
-        let residual = core::mem::take(&mut swap.residual);
         setup(true);
-        let residual = self.residual.fetch_add(residual, Ordering::Release);
+        let residual = self.residual.load(Ordering::Acquire);
         // if all residual readers finished already
-        if residual == expected_residual {
+        if residual == 0 {
             setup(false);
             return Poll::Ready(());
         }

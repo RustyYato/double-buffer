@@ -46,10 +46,6 @@ pub struct ReadGuard {
     swap_state: usize,
 }
 
-pub struct Swap {
-    residual: isize,
-}
-
 impl FlashStrategy<ThreadParkToken> {
     pub const fn new_blocking() -> Self {
         Self::with_park_token()
@@ -109,15 +105,8 @@ impl<ParkToken> FlashStrategy<ParkToken> {
     }
 }
 
-impl Swap {
-    // This negation cannot overflow because swap.residual is always positive
-    // and -isize::MAX does not overflow
-    #[inline]
-    #[allow(clippy::arithmetic_side_effects)]
-    const fn expected_residual(&self) -> isize {
-        -self.residual
-    }
-}
+#[non_exhaustive]
+pub struct Swap;
 
 // SAFETY: FlashStrategy when used as a strategy for a double buffer is thread safe
 // because finish_swap doesn't return while there are any readers in the
@@ -189,11 +178,13 @@ unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
         let mut residual = 0;
 
         readers.retain(|reader| {
+            // if the reader was dropped, then remove it from the list
             if Arc::is_unique(reader) {
                 return false;
             }
 
-            let reader_swap_state = reader.load(Ordering::Acquire);
+            // swap the buffers in each reader
+            let reader_swap_state = reader.fetch_xor(1, Ordering::AcqRel);
 
             // This increment is bounded by the number of readers there are
             // which can never exceed isize::MAX (because of the max allocation
@@ -206,32 +197,33 @@ unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
             true
         });
 
-        Ok(Swap { residual })
+        self.residual.fetch_add(residual, Ordering::Release);
+
+        Ok(Swap)
     }
 
-    unsafe fn is_swap_finished(&self, _writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool {
-        self.residual.load(Ordering::Acquire) == swap.expected_residual()
+    unsafe fn is_swap_finished(&self, _writer: &mut Self::WriterId, Swap: &mut Self::Swap) -> bool {
+        self.residual.load(Ordering::Acquire) == 0
     }
 
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard {
-        let swap_state = self.swap_state.load(Ordering::Acquire);
-        let reader_id = &reader.id;
+        let reader_id = &*reader.id;
+
         assert_eq!(
             reader_id.load(Ordering::Relaxed) & READER_ACTIVE,
             0,
             "Detected a leaked read guard"
         );
-        reader_id.store(swap_state | READER_ACTIVE, Ordering::Release);
-        ReadGuard { swap_state }
+
+        let id = reader_id.fetch_or(READER_ACTIVE, Ordering::Release);
+        ReadGuard { swap_state: id }
     }
 
-    unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, _guard: Self::ReadGuard) {
-        let reader_swap_state =
-            reader.id.fetch_xor(READER_ACTIVE, Ordering::Release) ^ READER_ACTIVE;
-        let swap_state = self.swap_state.load(Ordering::Acquire);
+    unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, guard: Self::ReadGuard) {
+        let reader_swap_state = reader.id.fetch_and(!READER_ACTIVE, Ordering::Release);
 
         // if there wasn't any intervening swap then just return
-        if swap_state == reader_swap_state {
+        if guard.swap_state & 1 == reader_swap_state & 1 {
             return;
         }
 
@@ -257,10 +249,10 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
     unsafe fn register_context(
         &self,
         _writer: &mut Self::WriterId,
-        swap: &mut Self::Swap,
+        Swap: &mut Self::Swap,
         ctx: &mut core::task::Context<'_>,
     ) -> Poll<()> {
-        self.poll(swap, |should_set| {
+        self.poll(|should_set| {
             if should_set {
                 self.parker.set(ctx)
             } else {
@@ -273,9 +265,9 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
 #[cfg(feature = "std")]
 // SAFETY: we check if is_swap_finished would return true before returning
 unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
-    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
+    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, Swap: Self::Swap) {
         if self
-            .poll(&mut swap, |should_set| {
+            .poll(|should_set| {
                 if should_set {
                     self.parker.set()
                 } else {
@@ -297,10 +289,10 @@ unsafe impl AsyncStrategy for FlashStrategy<AdaptiveParkToken> {
     unsafe fn register_context(
         &self,
         _writer: &mut Self::WriterId,
-        swap: &mut Self::Swap,
+        Swap: &mut Self::Swap,
         ctx: &mut core::task::Context<'_>,
     ) -> Poll<()> {
-        self.poll(swap, |should_set| {
+        self.poll(|should_set| {
             if should_set {
                 self.parker.async_token.set(ctx)
             } else {
@@ -312,9 +304,9 @@ unsafe impl AsyncStrategy for FlashStrategy<AdaptiveParkToken> {
 
 // SAFETY: we check if is_swap_finished would return true before returning
 unsafe impl BlockingStrategy for FlashStrategy<AdaptiveParkToken> {
-    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, mut swap: Self::Swap) {
+    unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, Swap: Self::Swap) {
         if self
-            .poll(&mut swap, |should_set| {
+            .poll(|should_set| {
                 if should_set {
                     self.parker.thread_token.set()
                 } else {
@@ -331,20 +323,15 @@ unsafe impl BlockingStrategy for FlashStrategy<AdaptiveParkToken> {
 }
 
 impl<T> FlashStrategy<T> {
-    fn poll(&self, swap: &mut Swap, mut setup: impl FnMut(bool)) -> Poll<()> {
-        if self.residual.load(Ordering::Acquire) == swap.expected_residual() {
-            if swap.residual != 0 {
-                self.residual.fetch_add(swap.residual, Ordering::Release);
-            }
+    fn poll(&self, mut setup: impl FnMut(bool)) -> Poll<()> {
+        if self.residual.load(Ordering::Acquire) == 0 {
             return Poll::Ready(());
         }
 
-        let expected_residual = swap.expected_residual();
-        let residual = core::mem::take(&mut swap.residual);
         setup(true);
-        let residual = self.residual.fetch_add(residual, Ordering::Release);
+        let residual = self.residual.load(Ordering::Acquire);
         // if all residual readers finished already
-        if residual == expected_residual {
+        if residual == 0 {
             setup(false);
             return Poll::Ready(());
         }
