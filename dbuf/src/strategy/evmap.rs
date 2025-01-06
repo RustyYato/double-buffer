@@ -11,7 +11,6 @@ use alloc::vec::Vec;
 use triomphe::Arc;
 
 pub struct EvMapStrategy {
-    // swap_state: AtomicUsize,
     is_swapped: AtomicBool,
     epochs: Mutex<Vec<Arc<AtomicUsize>>>,
     condvar: Condvar,
@@ -151,6 +150,7 @@ unsafe impl Strategy for EvMapStrategy {
 
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, _guard: Self::ReadGuard) {
         reader.id.fetch_add(1, Ordering::Release);
+        self.condvar.notify_one();
     }
 }
 
