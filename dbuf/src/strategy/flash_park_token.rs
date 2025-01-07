@@ -1,7 +1,7 @@
-use core::{
-    cell::Cell,
-    task::{Context, Waker},
-};
+use core::{cell::Cell, task::Waker};
+
+#[cfg(feature = "alloc")]
+use core::task::Context;
 
 #[cfg(feature = "std")]
 use std::thread::Thread;

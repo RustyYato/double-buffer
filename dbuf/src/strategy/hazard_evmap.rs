@@ -9,11 +9,15 @@ use core::{
 
 use crate::{interface::Strategy, strategy::hazard::ReleaseOnDrop};
 
+#[cfg(any(feature = "std", feature = "atomic-waker"))]
 use const_fn::const_fn;
 use sync_wrapper::SyncWrapper;
 
+#[cfg(any(feature = "std", feature = "atomic-waker"))]
+use super::atomic::park_token;
+
 use super::{
-    atomic::park_token::{self, Parker},
+    atomic::park_token::Parker,
     hazard::{Hazard, RawHazardGuard, RawHazardIter},
 };
 
@@ -51,7 +55,13 @@ unsafe impl Sync for Epoch {}
 const _: () = {
     const fn send_sync<T: Send + Sync>() {}
 
-    // let _ = send_sync::<EvMapStrategy>;
+    #[cfg(feature = "std")]
+    let _ = send_sync::<HazardEvMapStrategy<park_token::ThreadParkToken>>;
+    #[cfg(feature = "atomic-waker")]
+    let _ = send_sync::<HazardEvMapStrategy<park_token::AsyncParkToken>>;
+    #[cfg(feature = "std")]
+    #[cfg(feature = "atomic-waker")]
+    let _ = send_sync::<HazardEvMapStrategy<park_token::AdaptiveParkToken>>;
 };
 
 #[non_exhaustive]
@@ -87,6 +97,7 @@ impl HazardEvMapStrategy<park_token::AdaptiveParkToken> {
 
 impl<P: Parker> HazardEvMapStrategy<P> {
     #[const_fn(cfg(not(loom)))]
+    #[cfg(any(feature = "std", feature = "atomic-waker"))]
     const fn with_parker() -> Self {
         Self {
             is_swapped: AtomicBool::new(false),
