@@ -11,6 +11,8 @@
 //! Here is the worked example from the crate level docs adapted for [`DelayWriter`]
 //!  
 //! ```rust
+//! # #[cfg(all(feature = "std", feature = "triomphe"))]
+//! # {
 //! use dbuf::raw::{Writer, Reader, DoubleBufferData};
 //! use dbuf::strategy::flashmap::FlashStrategy;
 //!
@@ -58,6 +60,7 @@
 //! // so you can do whatever you want to it.
 //! let writer = writer.finish_swap();
 //! assert_eq!(*writer.get_mut(), 10);
+//! # }
 //! ```
 
 use core::fmt::Debug;

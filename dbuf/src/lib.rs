@@ -145,6 +145,8 @@
 //! Let's see how this example changes with a different implementation.
 //!
 //! ```rust
+//! # #[cfg(all(feature = "std", feature = "triomphe"))]
+//! # {
 //! use dbuf::raw::{Writer, Reader, DoubleBufferData};
 //! use dbuf::strategy::flashmap::FlashStrategy;
 //!
@@ -183,6 +185,7 @@
 //! // since the reader is dropped above, it is now safe to swap the buffers
 //! assert!(writer.try_swap().is_ok());
 //! assert_eq!(*writer.get_mut(), 10);
+//! # }
 //! ```
 
 #[cfg(feature = "alloc")]
