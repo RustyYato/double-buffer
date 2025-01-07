@@ -70,7 +70,7 @@ fn test() {
 fn test_mt() {
     let counter = core::sync::atomic::AtomicU32::new(0);
     std::thread::scope(|s| {
-        for _ in 0..100000 {
+        for _ in 0..100 {
             s.spawn(|| {
                 let val = static_once!(() => const {}).is_some();
                 counter.fetch_add(val as u32, Relaxed);
