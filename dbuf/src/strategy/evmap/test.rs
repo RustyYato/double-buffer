@@ -1,7 +1,6 @@
-#![cfg(feature = "std")]
 #![allow(unused)]
 
-use super::HazardFlashStrategy as FlashStrategy;
+use super::EvMapStrategy;
 
 use crate::{
     delay::DelayWriter,
@@ -13,7 +12,7 @@ use pollster::test as async_test;
 
 #[test]
 fn smoke() {
-    let mut state = DoubleBufferData::new(0, 1, FlashStrategy::new());
+    let mut state = DoubleBufferData::new(0, 1, EvMapStrategy::new());
     let mut writer = Writer::new(&mut state);
 
     let mut reader = writer.reader();
@@ -21,7 +20,7 @@ fn smoke() {
     let x = reader.read();
     assert_eq!(*x, *writer.split().read);
 
-    // SAFETY: afinish_swap is polled to completion before split_mut/get_mut is called
+    // SAFETY: finish_swap is called before split_mut/get_mut is called
     let mut swap = unsafe { writer.try_start_swap().unwrap() };
 
     // SAFETY: the swap is the latest swap

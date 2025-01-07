@@ -97,14 +97,18 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
     /// If there is already an ongoing swap, this is a no-op
     ///
     /// If there the strategy fails to swap, an error is returned
-    pub fn try_start_swap(&mut self) -> Result<(), SwapError<P::Strategy>> {
-        if self.swap.is_none() {
+    ///
+    /// Returns true if the swap was started, and false if there is already an ongoing swap
+    pub fn try_start_swap(&mut self) -> Result<bool, SwapError<P::Strategy>> {
+        let should_swap = self.swap.is_none();
+
+        if should_swap {
             // SAFETY: `DelayWriter` ensures that `finish_swap` or `afinish_swap`
             // is called before allowing mutable access to the `writer`
             self.swap = Some(unsafe { self.writer.try_start_swap()? })
         }
 
-        Ok(())
+        Ok(should_swap)
     }
 
     /// Start a swap
@@ -112,7 +116,9 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
     /// If there is already an ongoing swap, this is a no-op
     ///
     /// If there the strategy fails to swap, then this function panics
-    pub fn start_swap(&mut self)
+    ///
+    /// Returns true if the swap was started, and false if there is already an ongoing swap
+    pub fn start_swap(&mut self) -> bool
     where
         SwapError<P::Strategy>: Debug,
     {
@@ -175,7 +181,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
 
     /// check if there is an in progress swap
     #[inline]
-    pub fn has_swap(&mut self) -> bool {
+    pub const fn has_swap(&self) -> bool {
         self.swap.is_some()
     }
 
@@ -209,7 +215,6 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
 
     /// get the underlying writer, returns None if there is an ongoing swap
     pub fn get_writer_mut(&mut self) -> Option<&mut raw::Writer<P>> {
-        self.is_swap_finished();
         match self.swap {
             Some(_) => None,
             None => Some(&mut self.writer),

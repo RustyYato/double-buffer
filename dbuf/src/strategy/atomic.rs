@@ -34,6 +34,7 @@ impl AtomicStrategy<park_token::AsyncParkToken> {
     }
 }
 
+#[cfg(feature = "std")]
 #[cfg(feature = "atomic-waker")]
 impl AtomicStrategy<park_token::AdaptiveParkToken> {
     pub const fn new() -> Self {
