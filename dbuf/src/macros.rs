@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! static_once {
-    ($ty:ty => const $value:expr) => {{
+    ($ty:ty => const $value:block) => {{
         static mut VALUE: $ty = $value;
         static ONCE: $crate::macros::AtomicBool = $crate::macros::AtomicBool::new(false);
 
@@ -54,7 +54,7 @@ pub use core::{
 #[test]
 fn test() {
     for x in 0..100 {
-        let once = static_once!(() => const ());
+        let once = static_once!(() => const {});
         assert_eq!(once.is_some(), x == 0)
     }
 
@@ -72,7 +72,7 @@ fn test_mt() {
     std::thread::scope(|s| {
         for _ in 0..100000 {
             s.spawn(|| {
-                let val = static_once!(() => const ()).is_some();
+                let val = static_once!(() => const {}).is_some();
                 counter.fetch_add(val as u32, Relaxed);
             });
         }
