@@ -206,53 +206,19 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// this swap should be the latest one created from try_start_swap
     ///
     /// This future should be driven to completion before calling any mutable methods on self
-    /// or this the swap should be completed via one of the other methods
-    /// ([`Self::afinish_swap`], [`Self::finish_swap`], another call to [`Self::afinish_swap`])
-    pub async unsafe fn afinish_swap(&mut self, swap: &mut iface::Swap<P::Strategy>)
+    /// or this the swap should be completed by [`Self::finish_swap`] or another call to [`Self::afinish_swap`]
+    pub unsafe fn afinish_swap<'a, 's>(
+        &'a mut self,
+        swap: &'s mut iface::Swap<P::Strategy>,
+    ) -> WaitForSwap<'a, 's, P::Strategy>
     where
         P::Strategy: AsyncStrategy,
     {
-        struct WaitForSwap<'a, S: AsyncStrategy> {
-            strategy: &'a S,
-            swap: &'a mut S::Swap,
-            id: &'a mut S::WriterId,
-        }
-
-        impl<S: AsyncStrategy> core::future::Future for WaitForSwap<'_, S> {
-            type Output = ();
-
-            fn poll(
-                self: core::pin::Pin<&mut Self>,
-                cx: &mut core::task::Context<'_>,
-            ) -> core::task::Poll<Self::Output> {
-                // SAFETY: a pin on Self does not pin any of it's fields
-                let this = core::pin::Pin::into_inner(self);
-                // SAFETY: the id can from a Writer and the swap is the latest swap
-                // and while this future is alive, no one else can create a new swap
-                // because we have exclusive access to the writer
-                // If this future is dropped before completion, that's OK
-                // the strategy should be able to handle multiple calls to
-                // try_start_swap before any call to finish_swap
-                unsafe {
-                    if this.strategy.is_swap_finished(this.id, this.swap) {
-                        core::task::Poll::Ready(())
-                    } else {
-                        this.strategy.register_context(this.id, this.swap, cx)
-                    }
-                }
-            }
-        }
-
-        let no_unwind = NoUnwind;
-
         WaitForSwap {
             strategy: &self.ptr.strategy,
             swap,
             id: &mut self.id,
         }
-        .await;
-
-        core::mem::forget(no_unwind);
     }
 }
 
@@ -261,5 +227,43 @@ struct NoUnwind;
 impl Drop for NoUnwind {
     fn drop(&mut self) {
         panic!("detected unwind while finishing a swap, this is a critical bug which cannot be recovered from")
+    }
+}
+
+/// A future which can be awaited to ensure that the swap is completed
+pub struct WaitForSwap<'a, 's, S: AsyncStrategy> {
+    strategy: &'a S,
+    swap: &'s mut S::Swap,
+    id: &'a mut S::WriterId,
+}
+
+impl<S: AsyncStrategy> core::future::Future for WaitForSwap<'_, '_, S> {
+    type Output = ();
+
+    fn poll(
+        self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        let no_unwind = NoUnwind;
+
+        // SAFETY: a pin on Self does not pin any of it's fields
+        let this = core::pin::Pin::into_inner(self);
+        // SAFETY: the id can from a Writer and the swap is the latest swap
+        // and while this future is alive, no one else can create a new swap
+        // because we have exclusive access to the writer
+        // If this future is dropped before completion, that's OK
+        // the strategy should be able to handle multiple calls to
+        // try_start_swap before any call to finish_swap
+        let out = unsafe {
+            if this.strategy.is_swap_finished(this.id, this.swap) {
+                core::task::Poll::Ready(())
+            } else {
+                this.strategy.register_context(this.id, this.swap, cx)
+            }
+        };
+
+        core::mem::forget(no_unwind);
+
+        out
     }
 }
