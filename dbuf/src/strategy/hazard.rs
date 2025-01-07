@@ -37,6 +37,54 @@ struct HazardNodeChunk<T, const N: usize> {
     items: [CachePadded<HazardNode<T, N>>; N],
 }
 
+struct RawHazardNodeChunk<T, const N: usize>(NonNull<HazardNodeChunk<T, N>>);
+
+struct RawHazardChunkIter<T, const N: usize> {
+    current: Option<NonNull<HazardNodeChunk<T, N>>>,
+}
+
+type RawHazardNodeIter<T, const N: usize> = Flatten<RawHazardChunkIter<T, N>>;
+
+pub struct RawHazardIter<T, const N: usize> {
+    iter: RawHazardNodeIter<T, N>,
+}
+
+// SAFETY: `RawHazardIter` only exposes shared raw pointers into the `Hazard`
+// so we only need to require Sync
+unsafe impl<T: Sync, const N: usize> Send for RawHazardIter<T, N> {}
+// SAFETY: `RawHazardIter` only exposes shared raw pointers into the `Hazard`
+// so we only need to require Sync
+unsafe impl<T: Sync, const N: usize> Sync for RawHazardIter<T, N> {}
+
+pub struct RawSliceIter<T> {
+    start: *const T,
+    end: NonNull<T>,
+}
+impl<T, const N: usize> Clone for RawHazardIter<T, N> {
+    fn clone(&self) -> Self {
+        Self {
+            iter: self.iter.clone(),
+        }
+    }
+}
+
+impl<T, const N: usize> Clone for RawHazardChunkIter<T, N> {
+    fn clone(&self) -> Self {
+        Self {
+            current: self.current,
+        }
+    }
+}
+
+impl<T> Clone for RawSliceIter<T> {
+    fn clone(&self) -> Self {
+        Self {
+            start: self.start,
+            end: self.end,
+        }
+    }
+}
+
 struct HazardChunkIter<'a, T, const N: usize> {
     current: Option<NonNull<HazardNodeChunk<T, N>>>,
     lt: PhantomData<&'a HazardNodeChunk<T, N>>,
@@ -56,6 +104,15 @@ struct HazardNode<T, const N: usize> {
 pub struct RawHazardGuard<T, const N: usize> {
     // This is a tagged pointer,
     node: NonNull<HazardNode<T, N>>,
+}
+
+pub struct ReleaseOnDrop<'a, T, const N: usize>(pub &'a mut RawHazardGuard<T, N>);
+
+impl<T, const N: usize> Drop for ReleaseOnDrop<'_, T, N> {
+    fn drop(&mut self) {
+        // SAFETY: the reader was previously acquired, so it must be locked
+        unsafe { self.0.release() }
+    }
 }
 
 /// SAFETY: `RawHazardGuard` is a just like &T so it has the same requirements
@@ -292,13 +349,35 @@ impl<T, const N: usize> Hazard<T, N> {
         }
     }
 
+    unsafe fn raw_chunks(&self, order: Ordering) -> RawHazardChunkIter<T, N> {
+        // SAFETY: the caller ensures that this iterator will not outlive this `Hazard`
+        RawHazardChunkIter {
+            current: NonNull::new(self.head.load(order)),
+        }
+    }
+
     fn nodes(&self, order: Ordering) -> HazardNodeIter<'_, T, N> {
         self.chunks(order).flatten()
+    }
+
+    unsafe fn raw_nodes(&self, order: Ordering) -> RawHazardNodeIter<T, N> {
+        // SAFETY: the caller ensures that this iterator will not outlive this `Hazard`
+        unsafe { self.raw_chunks(order) }.flatten()
     }
 
     pub fn iter(&self) -> HazardIter<'_, T, N> {
         HazardIter {
             iter: self.nodes(Ordering::Relaxed),
+        }
+    }
+
+    /// # Safety
+    ///
+    /// This iterator should not outlive the Hazard
+    pub unsafe fn raw_iter(&self) -> RawHazardIter<T, N> {
+        RawHazardIter {
+            // SAFETY: the caller ensures that this iterator will not outlive this `Hazard`
+            iter: unsafe { self.raw_nodes(Ordering::Relaxed) },
         }
     }
 }
@@ -329,6 +408,66 @@ impl<'a, T, const N: usize> Iterator for HazardIter<'a, T, N> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|x| &x.value)
+    }
+}
+
+impl<T, const N: usize> Iterator for RawHazardChunkIter<T, N> {
+    type Item = RawHazardNodeChunk<T, N>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: This iterator is constructed from a Hazard, and the lifetime ensures that
+        // the Hazard is still alive, so every node in the chunk linked list is valid
+        let current = self.current?;
+        // SAFETY: since the caller of `raw_chunks` ensures that this iterator doesn't outlive the Hazard
+        // this pointer is still valid, since it is a part of the Hazard
+        self.current = NonNull::new(unsafe { current.as_ref().next });
+        Some(RawHazardNodeChunk(current))
+    }
+}
+
+impl<T, const N: usize> Iterator for RawHazardIter<T, N> {
+    type Item = NonNull<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter
+            .next()
+            // SAFETY: since the caller of `raw_iter` ensures that this iterator doesn't outlive the Hazard
+            // this pointer is still valid, since it is a part of the Hazard
+            .map(|x| NonNull::from(unsafe { &(*x.as_ptr()).value }))
+    }
+}
+
+impl<T, const N: usize> IntoIterator for RawHazardNodeChunk<T, N> {
+    type Item = NonNull<CachePadded<HazardNode<T, N>>>;
+    type IntoIter = RawSliceIter<CachePadded<HazardNode<T, N>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        // SAFETY: since the caller of `raw_nodes` ensures that this iterator doesn't outlive the Hazard
+        // this pointer is still valid, since it is a part of the Hazard
+        let ptrs = unsafe { self.0.as_ref() }.items.as_ptr_range();
+        RawSliceIter {
+            start: ptrs.start,
+            // SAFETY: this pointer is derived from a raw nonnull pointer
+            end: unsafe { NonNull::new_unchecked(ptrs.end.cast_mut()) },
+        }
+    }
+}
+
+impl<T> Iterator for RawSliceIter<T> {
+    type Item = NonNull<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start == self.end.as_ptr() {
+            None
+        } else {
+            // SAFETY: since the caller of `raw_nodes` ensures that this iterator doesn't outlive the Hazard
+            // this pointer is still valid, since it is a part of the Hazard
+            unsafe {
+                let ptr = self.start;
+                self.start = self.start.add(1);
+                Some(NonNull::new_unchecked(ptr.cast_mut()))
+            }
+        }
     }
 }
 

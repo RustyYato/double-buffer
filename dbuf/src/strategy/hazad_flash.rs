@@ -2,7 +2,10 @@
 //!
 //! see [`flashmap`](https://docs.rs/flashmap/latest/flashmap/) for more details
 
-use crate::interface::{AsyncStrategy, Strategy};
+use crate::{
+    interface::{AsyncStrategy, Strategy},
+    strategy::hazard::ReleaseOnDrop,
+};
 use core::{
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
     task::Poll,
@@ -13,16 +16,17 @@ use sync_wrapper::SyncWrapper;
 
 #[cfg(feature = "std")]
 use super::flash_park_token::{AdaptiveParkToken, ThreadParkToken};
-use super::flash_park_token::{AsyncParkToken, Parker};
+use super::{
+    flash_park_token::{AsyncParkToken, Parker},
+    hazard::{Hazard, RawHazardGuard},
+};
 
 #[cfg(test)]
 mod test;
 
-mod hazard;
-
 pub struct HazardFlashStrategy<P> {
     swap_state: AtomicUsize,
-    readers: hazard::Hazard<AtomicUsize, 4>,
+    readers: Hazard<AtomicUsize, 4>,
     residual: AtomicIsize,
     parker: P,
 }
@@ -40,7 +44,7 @@ const READER_ACTIVE: usize = 2;
 
 pub struct WriterId(());
 pub struct ReaderId {
-    id: SyncWrapper<Option<hazard::RawHazardGuard<AtomicUsize, 4>>>,
+    id: SyncWrapper<Option<RawHazardGuard<AtomicUsize, 4>>>,
 }
 
 pub struct ReadGuard {
@@ -78,7 +82,7 @@ impl<P: Parker> HazardFlashStrategy<P> {
     const fn with_parker() -> Self {
         Self {
             swap_state: AtomicUsize::new(NOT_SWAPPED),
-            readers: hazard::Hazard::new(),
+            readers: Hazard::new(),
             residual: AtomicIsize::new(0),
             parker: P::NEW,
         }
@@ -117,9 +121,7 @@ impl<P: Parker> HazardFlashStrategy<P> {
     }
 
     fn reader_id<'a>(&'a self, reader: &'a mut ReaderId) -> &'a AtomicUsize {
-        let reader_id = reader
-            .id
-            .get_mut()
+        let reader_id = (reader.id.get_mut())
             .get_or_insert_with(|| self.readers.get_or_insert_with(|| AtomicUsize::new(0)));
         // SAFETY: the hazard is still alive, since the HazardFlashStrategy contains it
         unsafe { reader_id.as_ref() }
@@ -247,36 +249,29 @@ unsafe impl<P: Parker> Strategy for HazardFlashStrategy<P> {
     }
 
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, guard: Self::ReadGuard) {
-        struct DropGuard<'a, T, const N: usize>(&'a mut hazard::RawHazardGuard<T, N>);
+        {
+            let reader_guard = reader.id.get_mut().as_mut();
+            // SAFETY: the reader was previously acquired, so this must be Some
+            let reader_guard = unsafe { reader_guard.unwrap_unchecked() };
+            let reader_guard = ReleaseOnDrop(reader_guard);
+            // SAFETY: the reader was previously acquired, so it must be locked
+            let reader_id = unsafe { reader_guard.0.as_ref() };
+            let reader_swap_state = reader_id.fetch_and(!READER_ACTIVE, Ordering::Release);
 
-        impl<T, const N: usize> Drop for DropGuard<'_, T, N> {
-            fn drop(&mut self) {
-                // SAFETY: the reader was previously acquired, so it must be locked
-                unsafe { self.0.release() }
+            // if there wasn't any intervening swap then just return
+            if guard.swap_state & 1 == reader_swap_state & 1 {
+                return;
             }
-        }
 
-        let reader_guard = reader.id.get_mut().as_mut_slice();
-        // SAFETY: the reader was previously acquired, so this must be Some
-        let reader_guard = unsafe { reader_guard.get_unchecked_mut(0) };
-        let reader_guard = DropGuard(reader_guard);
-        // SAFETY: the reader was previously acquired, so it must be locked
-        let reader_id = unsafe { reader_guard.0.as_ref() };
-        let reader_swap_state = reader_id.fetch_and(!READER_ACTIVE, Ordering::Release);
+            // if was an intervening swap, then this is a residual reader
+            // from the last swap. So we should register it as such
 
-        // if there wasn't any intervening swap then just return
-        if guard.swap_state & 1 == reader_swap_state & 1 {
-            return;
-        }
+            let residual = self.residual.fetch_sub(1, Ordering::AcqRel);
 
-        // if was an intervening swap, then this is a residual reader
-        // from the last swap. So we should register it as such
-
-        let residual = self.residual.fetch_sub(1, Ordering::AcqRel);
-
-        // if there are more residual readers, then someone else will wake up the writer
-        if residual != 1 {
-            return;
+            // if there are more residual readers, then someone else will wake up the writer
+            if residual != 1 {
+                return;
+            }
         }
 
         // if this is the last residual reader, then wake up the writer

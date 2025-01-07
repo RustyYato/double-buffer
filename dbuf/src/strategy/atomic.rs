@@ -207,6 +207,7 @@ unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
         let swapped = guard;
         let num_readers = &self.num_readers[swapped as usize];
         num_readers.fetch_sub(1, Ordering::Release);
+        self.parker.wake();
     }
 }
 
@@ -222,6 +223,7 @@ unsafe impl crate::interface::AsyncStrategy for AtomicStrategy<park_token::Async
     ) -> core::task::Poll<()> {
         // SAFETY: the caller ensures that writer and swap are valid
         if unsafe { self.is_swap_finished(writer, swap) } {
+            self.parker.clear();
             core::task::Poll::Ready(())
         } else {
             self.parker.set(ctx);
@@ -253,6 +255,7 @@ unsafe impl crate::interface::AsyncStrategy for AtomicStrategy<park_token::Adapt
     ) -> core::task::Poll<()> {
         // SAFETY: the caller ensures that writer and swap are valid
         if unsafe { self.is_swap_finished(writer, swap) } {
+            self.parker.async_token.clear();
             core::task::Poll::Ready(())
         } else {
             self.parker.async_token.set(ctx);
@@ -266,6 +269,7 @@ unsafe impl crate::interface::AsyncStrategy for AtomicStrategy<park_token::Adapt
 // SAFETY: is_swap_finished always returns true
 unsafe impl crate::interface::BlockingStrategy for AtomicStrategy<park_token::AdaptiveParkToken> {
     unsafe fn finish_swap(&self, writer: &mut Self::WriterId, mut swap: Self::Swap) {
+        self.parker.async_token.clear();
         self.parker
             .thread_token
             // SAFETY: the caller ensures that writer and swap are valid

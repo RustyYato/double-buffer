@@ -44,7 +44,7 @@ pub unsafe trait Parker: Sized + seal::Seal {
 
     #[doc(hidden)]
     #[allow(unused)]
-    unsafe fn wake(&self);
+    fn wake(&self);
 }
 
 #[cfg(feature = "std")]
@@ -59,14 +59,14 @@ unsafe impl Parker for ThreadParkToken {
     };
 
     #[doc(hidden)]
-    unsafe fn wake(&self) {
+    fn wake(&self) {
         self.cv.notify_one();
     }
 }
 
 #[cfg(feature = "std")]
 impl ThreadParkToken {
-    pub(super) fn park_until(&self, mut f: impl FnMut() -> bool) {
+    pub(in crate::strategy) fn park_until(&self, mut f: impl FnMut() -> bool) {
         let mut guard = self.mutex.lock().unwrap_or_else(PoisonError::into_inner);
         while !f() {
             guard = self.cv.wait(guard).unwrap_or_else(PoisonError::into_inner)
@@ -98,7 +98,7 @@ unsafe impl Parker for AsyncParkToken {
     const NEW: Self = Self::new();
 
     #[doc(hidden)]
-    unsafe fn wake(&self) {
+    fn wake(&self) {
         struct Bomb;
 
         impl Drop for Bomb {
@@ -129,11 +129,8 @@ unsafe impl Parker for AdaptiveParkToken {
     };
 
     #[doc(hidden)]
-    unsafe fn wake(&self) {
-        // SAFETY: ensured by caller
-        unsafe {
-            self.thread_token.wake();
-            self.async_token.wake();
-        }
+    fn wake(&self) {
+        self.thread_token.wake();
+        self.async_token.wake();
     }
 }

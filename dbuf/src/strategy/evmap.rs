@@ -10,6 +10,9 @@ use crate::interface::{BlockingStrategy, Strategy};
 use alloc::vec::Vec;
 use triomphe::Arc;
 
+#[cfg(test)]
+mod test;
+
 pub struct EvMapStrategy {
     is_swapped: AtomicBool,
     epochs: Mutex<Vec<Arc<AtomicUsize>>>,
