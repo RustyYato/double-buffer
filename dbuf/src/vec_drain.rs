@@ -9,7 +9,7 @@ pub struct Drain<'a, T> {
     lt: PhantomData<&'a mut Vec<T>>,
 }
 
-pub fn drain_unti<T>(vec: &mut Vec<T>, n: RangeTo<usize>) -> Drain<'_, T> {
+pub fn drain_until<T>(vec: &mut Vec<T>, n: RangeTo<usize>) -> Drain<'_, T> {
     const { assert!(core::mem::size_of::<T>() > 0) }
     let _ = &vec[n];
     let old_len = vec.len();

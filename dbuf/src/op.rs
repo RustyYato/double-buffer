@@ -113,7 +113,7 @@ fn swap_buffers<
 
     let water_line = &mut SetOnDrop::new(water_line).0;
     #[allow(clippy::arithmetic_side_effects)]
-    for op in crate::vec_drain::drain_unti(op_log, ..*water_line) {
+    for op in crate::vec_drain::drain_until(op_log, ..*water_line) {
         *water_line -= 1;
         op.into_inner().apply_once(buffer, extras, params);
     }

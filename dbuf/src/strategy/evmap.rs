@@ -176,14 +176,14 @@ unsafe impl BlockingStrategy for EvMapStrategy {
 }
 
 fn is_swap_finished(epochs: &[Arc<AtomicUsize>], writer: &WriterId, swap: &mut Swap) -> bool {
-    for (i, (epoch, last_epoch)) in core::iter::zip(
+    for (i, (epoch, &last_epoch)) in core::iter::zip(
         &epochs[swap.range.clone()],
         &writer.last_epochs[swap.range.clone()],
     )
     .enumerate()
     {
         // if the reader wasn't reading at the start of the swap, then it cannot be in the current buffer
-        if *last_epoch % 2 == 0 {
+        if last_epoch % 2 == 0 {
             continue;
         }
 
@@ -194,7 +194,7 @@ fn is_swap_finished(epochs: &[Arc<AtomicUsize>], writer: &WriterId, swap: &mut S
         // swap.range.start + i < epochs.len(),  so
         // `swap.range.start + i` cannot overflow
         #[allow(clippy::arithmetic_side_effects)]
-        if now == *last_epoch {
+        if now == last_epoch {
             swap.range.start += i;
             return false;
         }
