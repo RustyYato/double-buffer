@@ -247,6 +247,14 @@ unsafe impl<P: Parker> Strategy for HazardEvMapStrategy<P> {
             self.reader_id(reader)
         };
 
+        fn read_failed() -> ! {
+            panic!("read failed: tried to read from a read handle after the read guard was leaked")
+        }
+
+        if reader_id.load(Ordering::Relaxed) % 2 != 0 {
+            read_failed()
+        }
+
         // this needs to syncronize with `try_start_swap`/`is_swap_finished` (so needs at least `Release`) and
         // it needs to prevent reads from the `raw::ReaderGuard` from being reordered before this (so needs at least `Acquire`)
         // the cheapest ordering which satisfies this is `AcqRel`
