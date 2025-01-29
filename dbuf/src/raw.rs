@@ -19,10 +19,40 @@ pub struct DoubleBufferData<T, S, Extras: ?Sized = ()> {
     pub extras: Extras,
 }
 
+/// These tests ensure that `DoubleBufferCell` isn't `Send` or `Sync` when that would be unsound
+///
+/// ```compile_fail,E0412
+/// const fn test_send_sync<T: Send, U: Sync>() {
+///     let _ = test_send_sync::<DoubleBufferCell<U>, U>;
+/// }
+/// ```
+///
+/// ```compile_fail,E0412
+/// const fn test_send_sync<T: Send, U: Sync>() {
+///     let _ = test_send_sync::<T, DoubleBufferCell<T>>;
+/// }
+/// ```
+///
+/// ```compile_fail,E0412
+/// const fn test_send_sync<T: Send, U: Sync>() {
+///     let _ = test_send_sync::<T, DoubleBufferCell<U>>;
+/// }
+/// ```
 #[repr(transparent)]
 struct DoubleBufferCell<T> {
     parts: [UnsafeCell<T>; 2],
 }
+
+const _: () = {
+    const fn test_send_sync<T: Send, U: Sync>() {
+        let _ = test_send_sync::<DoubleBufferCell<T>, DoubleBufferCell<&U>>;
+    }
+};
+
+// SAFETY:
+// This requires `Send`: because the `Writer` can mutate `T` through a shared reference to `DoubleBufferData`
+// This requries `Sync`: because the `Reader` can get shared access to `T` through a shared reference to `DoubleBufferData`
+unsafe impl<T: Send + Sync> Sync for DoubleBufferCell<T> {}
 
 impl<T> DoubleBufferCell<T> {
     const fn get(&self, swapped: bool) -> (*const T, *mut T) {
