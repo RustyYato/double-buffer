@@ -58,7 +58,7 @@ impl EvMapStrategy {
 }
 
 pub struct Swap {
-    range: core::ops::Range<usize>,
+    start: usize,
 }
 
 // SAFETY: FlashStrategy when used as a strategy for a double buffer is thread safe
@@ -137,9 +137,7 @@ unsafe impl Strategy for EvMapStrategy {
             *last_epoch = epoch.load(Ordering::Acquire);
         }
 
-        Ok(Swap {
-            range: 0..epochs.len(),
-        })
+        Ok(Swap { start: 0 })
     }
 
     unsafe fn is_swap_finished(&self, writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool {
@@ -187,11 +185,8 @@ unsafe impl BlockingStrategy for EvMapStrategy {
 }
 
 fn is_swap_finished(epochs: &[Arc<AtomicUsize>], writer: &WriterId, swap: &mut Swap) -> bool {
-    for (i, (epoch, &last_epoch)) in core::iter::zip(
-        &epochs[swap.range.clone()],
-        &writer.last_epochs[swap.range.clone()],
-    )
-    .enumerate()
+    for (i, (epoch, &last_epoch)) in
+        core::iter::zip(&epochs[swap.start..], &writer.last_epochs[swap.start..]).enumerate()
     {
         // if the reader wasn't reading at the start of the swap, then it cannot be in the current buffer
         if last_epoch % 2 == 0 {
@@ -206,10 +201,12 @@ fn is_swap_finished(epochs: &[Arc<AtomicUsize>], writer: &WriterId, swap: &mut S
         // `swap.range.start + i` cannot overflow
         #[allow(clippy::arithmetic_side_effects)]
         if now == last_epoch {
-            swap.range.start += i;
+            swap.start += i;
             return false;
         }
     }
+
+    swap.start = writer.last_epochs.len();
 
     true
 }
