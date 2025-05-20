@@ -99,7 +99,11 @@ impl<ParkToken: Parker> FlashStrategy<ParkToken> {
 impl<ParkToken> FlashStrategy<ParkToken> {
     fn create_reader_id(&self) -> ReaderId {
         let mut readers = self.readers.lock().unwrap_or_else(PoisonError::into_inner);
-        let reader = Arc::new(AtomicUsize::new(0));
+        // we need to load the swap state here so that readers start on the right buffer
+        // since we are under the lock, and the swap state only changes under this same lock,
+        // we are guaranteed that to see the correct swap state
+        let swap = self.swap_state.load(Ordering::Relaxed);
+        let reader = Arc::new(AtomicUsize::new(swap));
         readers.push(reader.clone());
         ReaderId { id: reader }
     }
@@ -170,9 +174,11 @@ unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
         &self,
         _writer: &mut Self::WriterId,
     ) -> Result<Self::Swap, Self::SwapError> {
-        let old_swap_state = self.swap_state.fetch_xor(SWAPPED, Ordering::Release);
-
         let mut readers = self.readers.lock().unwrap_or_else(PoisonError::into_inner);
+
+        // we need to modify the swap state under the lock to stay consistent with `create_reader_id`
+        // so that cloning readers can coordinate the swap state with the writer.
+        let old_swap_state = self.swap_state.fetch_xor(SWAPPED, Ordering::Release);
 
         let residual_swap_state = old_swap_state | READER_ACTIVE;
         let mut residual = 0;

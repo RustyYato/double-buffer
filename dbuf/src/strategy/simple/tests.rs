@@ -30,3 +30,33 @@ async fn smoke() {
     // SAFETY: the swap is the latest swap
     unsafe { writer.afinish_swap(&mut { swap }).await };
 }
+
+#[test]
+fn test_issue_1() {
+    let mut data = DoubleBufferData::new(1, 2, FlashStrategy::new());
+
+    let writer = Writer::new(&mut data);
+    let mut writer = DelayWriter::from_writer(writer);
+
+    let mut reader1 = writer.reader();
+    assert_eq!(*reader1.read(), 1);
+
+    writer.start_swap();
+    writer.finish_swap();
+
+    let mut reader2 = writer.reader();
+    assert_eq!(*reader1.read(), 2);
+    assert_eq!(*reader2.read(), 2);
+
+    let guard = reader2.read();
+
+    assert_eq!(*guard, 2);
+
+    *writer.get_writer_mut().unwrap().get_mut() = 3;
+
+    assert_eq!(*guard, 2);
+    drop(guard);
+
+    assert_eq!(*reader1.read(), 2);
+    assert_eq!(*reader2.read(), 2);
+}
