@@ -126,7 +126,7 @@ fn swap_buffers<
 struct SetOnDrop<'a>(usize, &'a mut usize);
 
 impl<'a> SetOnDrop<'a> {
-    pub fn new(value: &'a mut usize) -> Self {
+    pub const fn new(value: &'a mut usize) -> Self {
         Self(*value, value)
     }
 }

@@ -83,16 +83,16 @@
 //! This crate provides a few default strategy types
 //!
 //! * [`strategy::simple::SimpleStrategy`] - A non-thread-safe strategy which just keeps two
-//!     counters for how many readers are in each buffer, it checks these counts whenever you try to
-//!     swap the buffers, and errors if there are any readers in the other buffer.
+//!   counters for how many readers are in each buffer, it checks these counts whenever you try to
+//!   swap the buffers, and errors if there are any readers in the other buffer.
 //! * [`strategy::simple_async::SimpleAsyncStrategy`] - A non-thread-safe strategy which just keeps two
-//!     counters for how many readers are in each buffer. It waits until there are no more readers in
-//!     the other buffer before swapping.
+//!   counters for how many readers are in each buffer. It waits until there are no more readers in
+//!   the other buffer before swapping.
 //! * [`strategy::atomic::AtomicStrategy`] - A thread-safe strategy which just keeps two
-//!     counters for how many readers are in each buffer, it checks these counts whenever you try to
-//!     swap the buffers, and errors if there are any readers in the other buffer.
+//!   counters for how many readers are in each buffer, it checks these counts whenever you try to
+//!   swap the buffers, and errors if there are any readers in the other buffer.
 //! * [`strategy::flashmap::FlashStrategy`] - A thread-safe strategy that is based off of the
-//!     [`flashmap`](https://docs.rs/flashmap) crate. see module level docs for details.
+//!   [`flashmap`](https://docs.rs/flashmap) crate. see module level docs for details.
 //!
 //! ## Worked Example
 //!

@@ -217,7 +217,7 @@ impl<P: DoubleBufferWriterPointer> DelayWriter<P> {
     }
 
     /// get the underlying writer, returns None if there is an ongoing swap
-    pub fn get_writer_mut(&mut self) -> Option<&mut raw::Writer<P>> {
+    pub const fn get_writer_mut(&mut self) -> Option<&mut raw::Writer<P>> {
         match self.swap {
             Some(_) => None,
             None => Some(&mut self.writer),
