@@ -4,6 +4,8 @@
 
 use core::{borrow::Borrow, cell::UnsafeCell};
 
+mod reference;
+
 mod reader;
 mod writer;
 

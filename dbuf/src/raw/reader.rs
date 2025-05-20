@@ -1,9 +1,11 @@
-use core::{borrow::Borrow, marker::PhantomData, mem::ManuallyDrop, ops, ptr::NonNull};
+use core::{borrow::Borrow, mem::ManuallyDrop, ops};
 
 use crate::interface::{
     self as iface, create_invalid_reader_id, DoubleBufferReaderPointer, DoubleBufferWriterPointer,
     ReaderId, Strategy,
 };
+
+use super::reference::RawReference;
 
 /// A reader into a double buffer
 ///
@@ -22,11 +24,6 @@ pub struct ReaderGuard<'a, T: ?Sized, P: DoubleBufferWriterPointer> {
     raw: RawReaderGuard<'a, P>,
 }
 
-struct RawReference<'a, T: ?Sized> {
-    ptr: NonNull<T>,
-    lt: PhantomData<&'a T>,
-}
-
 struct RawReaderGuard<'a, P: 'a + DoubleBufferWriterPointer> {
     guard: ManuallyDrop<iface::ReaderGuard<P::Strategy>>,
     reader_id: &'a mut ReaderId<P::Strategy>,
@@ -34,18 +31,6 @@ struct RawReaderGuard<'a, P: 'a + DoubleBufferWriterPointer> {
 }
 
 impl<P: Copy + DoubleBufferReaderPointer> Copy for Reader<P> where ReaderId<P::Strategy>: Copy {}
-
-/// SAFETY: [`RawReference`] is semantically equivalent to a [`&T`] but without
-/// the validity requirements
-unsafe impl<T: ?Sized> Send for RawReference<'_, T> where T: Sync {}
-/// SAFETY: [`RawReference`] is semantically equivalent to a [`&T`] but without
-/// the validity requirements
-unsafe impl<T: ?Sized> Sync for RawReference<'_, T> where T: Sync {}
-impl<T: ?Sized> core::panic::UnwindSafe for RawReference<'_, T> where T: core::panic::RefUnwindSafe {}
-impl<T: ?Sized> core::panic::RefUnwindSafe for RawReference<'_, T> where
-    T: core::panic::RefUnwindSafe
-{
-}
 
 impl<P: DoubleBufferWriterPointer> core::panic::UnwindSafe for RawReaderGuard<'_, P> {}
 impl<P: DoubleBufferWriterPointer> core::panic::RefUnwindSafe for RawReaderGuard<'_, P> {}
@@ -92,16 +77,10 @@ impl<P: DoubleBufferReaderPointer> Reader<P> {
         let extras = core::ptr::addr_of!(data.extras);
 
         Ok(ReaderGuard {
-            ptr: RawReference {
-                // SAFETY: the pointer from ptr.buffers.get are always non-null
-                ptr: unsafe { NonNull::new_unchecked(reader.cast_mut()) },
-                lt: PhantomData,
-            },
-            extras: RawReference {
-                // SAFETY: references are always non-null, and extras is derived from a reference
-                ptr: unsafe { NonNull::new_unchecked(extras.cast_mut()) },
-                lt: PhantomData,
-            },
+            // SAFETY: the pointer from ptr.buffers.get are always non-null
+            ptr: unsafe { RawReference::new(reader.cast_mut()) },
+            // SAFETY: references are always non-null, and extras is derived from a reference
+            extras: unsafe { RawReference::new(extras.cast_mut()) },
             raw: RawReaderGuard {
                 guard: ManuallyDrop::new(guard),
                 reader_id: &mut self.id,
@@ -153,7 +132,7 @@ impl<T: ?Sized, P: DoubleBufferWriterPointer> ops::Deref for ReaderGuard<'_, T, 
         // SAFETY: self.raw ensures that the writer doesn't have access to self.ptr
         // so there is no race with the writer, and readers cannot race with each other
         // self.ptr is non-null, well aligned, allocated and valid for reads
-        unsafe { self.ptr.ptr.as_ref() }
+        &self.ptr
     }
 }
 
@@ -161,7 +140,7 @@ impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
     pub const fn extras(&self) -> &P::Extras {
         // SAFETY: extras is derived from a reference, which is bound to the lifetime
         // 'a, so it is still valid.
-        unsafe { self.extras.ptr.as_ref() }
+        self.extras.as_ref()
     }
 
     /// Try to map the [`ReaderGuard`] to another value
@@ -169,17 +148,7 @@ impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
         self,
         f: impl FnOnce(&T) -> Result<&U, E>,
     ) -> Result<ReaderGuard<'a, U, P>, (Self, E)> {
-        match f(&self) {
-            Ok(ptr) => Ok(ReaderGuard {
-                ptr: RawReference {
-                    ptr: NonNull::from(ptr),
-                    lt: PhantomData,
-                },
-                extras: self.extras,
-                raw: self.raw,
-            }),
-            Err(err) => Err((self, err)),
-        }
+        self.try_map_with_extras(|value, _| f(value))
     }
 
     /// Map the [`ReaderGuard`] to another value
@@ -197,10 +166,8 @@ impl<'a, T: ?Sized, P: DoubleBufferWriterPointer> ReaderGuard<'a, T, P> {
     ) -> Result<ReaderGuard<'a, U, P>, (Self, E)> {
         match f(&self, self.extras()) {
             Ok(ptr) => Ok(ReaderGuard {
-                ptr: RawReference {
-                    ptr: NonNull::from(ptr),
-                    lt: PhantomData,
-                },
+                // SAFETY: this pointer is derived from self, which is guaranteed to be live for `'a`
+                ptr: unsafe { RawReference::new(core::ptr::from_ref(ptr).cast_mut()) },
                 extras: self.extras,
                 raw: self.raw,
             }),
