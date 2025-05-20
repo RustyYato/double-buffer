@@ -154,7 +154,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     ///
     /// # Safety
     ///
-    /// there should be no calls to [`Self::split_mut`] or [`Self::get_mut`] until
+    /// there should be no calls to [`Self::split_mut`], [`Self::get_mut`], or [`Self::try_start_swap`] until
     /// [`Self::is_swap_finished`] returns true, [`Self::finish_swap`] is called
     /// or [`Self::afinish_swap`] is driven to completion
     pub unsafe fn try_start_swap(
@@ -204,9 +204,6 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// # Safety
     ///
     /// this swap should be the latest one created from try_start_swap
-    ///
-    /// This future should be driven to completion before calling any mutable methods on self
-    /// or this the swap should be completed by [`Self::finish_swap`] or another call to [`Self::afinish_swap`]
     pub unsafe fn afinish_swap<'a, 's>(
         &'a mut self,
         swap: &'s mut iface::Swap<P::Strategy>,

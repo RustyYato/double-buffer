@@ -3,6 +3,7 @@
 //! see [`flashmap`](https://docs.rs/flashmap/latest/flashmap/) for more details
 
 use core::{
+    cell::UnsafeCell,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
     task::Poll,
 };
@@ -18,8 +19,46 @@ use super::flash_park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadP
 #[cfg(test)]
 mod test;
 
+struct GuardedUsize(UnsafeCell<usize>);
+
+// SAFETY: `GuardedUsize` is only modified when under the `readers` lock in `FlashStrategy`
+// and only read either while the lock cannot be taken or while under the lock
+// so there is no potential for a race condition
+unsafe impl Sync for GuardedUsize {}
+
+impl GuardedUsize {
+    /// # Safety
+    ///
+    /// This function must only be called either when the `readers` lock cannot be taken
+    /// or when the `readers` lock is currently held
+    const unsafe fn read(&self) -> usize {
+        // SAFETY: this can only conflict with `self.swap()`, but that can only be called
+        // when the reader lock is held, and since `self.read()` requries the lock be held
+        // or not possible to hold, it's not possible to concurrently call with `swap`
+        // and within a thread we don't hand out references to `GuardedUsize` so there is no issues
+        // there as well
+        unsafe { self.0.get().read() }
+    }
+
+    /// # Safety
+    ///
+    /// This function must only be called when the `readers` lock is currently held
+    const unsafe fn swap(&self) -> usize {
+        // SAFETY: this can only conflict with `self.read()`, but that can only be called
+        // when either the reader lock is held or when the readers lock cannot be taken
+        // so it's not possible to concurrently call with `swap`
+        // and within a thread we don't hand out references to `GuardedUsize` so there is no issues
+        // there as well
+        unsafe {
+            let old = *self.0.get();
+            *self.0.get() ^= SWAPPED;
+            old
+        }
+    }
+}
+
 pub struct FlashStrategy<ParkToken> {
-    swap_state: AtomicUsize,
+    swap_state: GuardedUsize,
     readers: Mutex<Vec<Arc<AtomicUsize>>>,
     residual: AtomicIsize,
     parker: ParkToken,
@@ -88,7 +127,7 @@ impl Default for FlashStrategy<AdaptiveParkToken> {
 impl<ParkToken: Parker> FlashStrategy<ParkToken> {
     const fn with_park_token() -> Self {
         Self {
-            swap_state: AtomicUsize::new(NOT_SWAPPED),
+            swap_state: GuardedUsize(UnsafeCell::new(NOT_SWAPPED)),
             readers: Mutex::new(Vec::new()),
             residual: AtomicIsize::new(0),
             parker: ParkToken::NEW,
@@ -99,7 +138,9 @@ impl<ParkToken: Parker> FlashStrategy<ParkToken> {
 impl<ParkToken> FlashStrategy<ParkToken> {
     fn create_reader_id(&self) -> ReaderId {
         let mut readers = self.readers.lock().unwrap_or_else(PoisonError::into_inner);
-        let reader = Arc::new(AtomicUsize::new(0));
+        // SAFETY: we are under the lock
+        let swap = unsafe { self.swap_state.read() };
+        let reader = Arc::new(AtomicUsize::new(swap));
         readers.push(reader.clone());
         ReaderId { id: reader }
     }
@@ -149,16 +190,12 @@ unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
     }
 
     unsafe fn is_swapped_writer(&self, _writer: &Self::WriterId) -> bool {
-        // SAFETY: The only write to self.swap_state happens in try_start_swap
-        // which needs a &mut Self::WriterId, but we current hold a &Self::WriterId.
+        // SAFETY: The only write to `self.swap_state` happens in `try_start_swap`
+        // which needs a `&mut Self::WriterId`, but we current hold a `&Self::WriterId.`
         //
-        // There are at most 1 Self::WriterId's associated with a given strategy at a time.
-        //
-        // So there must be some synchronization between this and `try_start_swap`.
-        // So there can be no race between that write and this read.
-        //
-        // And it is fine to race two (non-atomic) reads
-        let swap_state = unsafe { core::ptr::read(&self.swap_state).into_inner() };
+        // Since there is at most 1 Self::WriterId's associated with a given strategy at a time.
+        // There cannot be any race between this function and `try_start_swap`
+        let swap_state = unsafe { self.swap_state.read() };
         swap_state != NOT_SWAPPED
     }
 
@@ -170,9 +207,10 @@ unsafe impl<ParkToken: Parker> Strategy for FlashStrategy<ParkToken> {
         &self,
         _writer: &mut Self::WriterId,
     ) -> Result<Self::Swap, Self::SwapError> {
-        let old_swap_state = self.swap_state.fetch_xor(SWAPPED, Ordering::Release);
-
         let mut readers = self.readers.lock().unwrap_or_else(PoisonError::into_inner);
+
+        // SAFETY: we are under the lock
+        let old_swap_state = unsafe { self.swap_state.swap() };
 
         let residual_swap_state = old_swap_state | READER_ACTIVE;
         let mut residual = 0;
