@@ -161,12 +161,10 @@ pub unsafe trait Strategy {
     /// and this function will return [`Ok`]
     /// otherwise this function will return [`Err`] (and the buffers will not be swapped)
     ///
-    /// NOTE: for implementors, it is safe to call [`Self::try_start_swap`] as many times as the
-    /// user wants, and only the last swap matters.
-    ///
     /// # Safety
     ///
-    /// the writer id must be valid
+    /// * the writer id must be valid
+    /// * there must not be any ongoing swaps
     unsafe fn try_start_swap(
         &self,
         writer: &mut Self::WriterId,
