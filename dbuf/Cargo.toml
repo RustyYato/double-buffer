@@ -33,7 +33,7 @@ version = "0.7"
 features = ["checkpoint"]
 
 [dev-dependencies.pollster]
-version = "0.3"
+version = "0.4"
 features = ["macro"]
 
 [lints.rust]
