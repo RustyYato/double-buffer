@@ -1,6 +1,6 @@
 #![allow(unused, clippy::let_unit_value)]
 
-use super::SimpleStrategy as FlashStrategy;
+use super::SimpleStrategy;
 
 use crate::{
     delay::DelayWriter,
@@ -11,7 +11,7 @@ use pollster::test as async_test;
 
 #[async_test]
 async fn smoke() {
-    let mut state = DoubleBufferData::new(0, 1, FlashStrategy::new());
+    let mut state = DoubleBufferData::new(0, 1, SimpleStrategy::new());
     let mut writer = Writer::new(&mut state);
 
     let mut reader = writer.reader();
@@ -33,7 +33,7 @@ async fn smoke() {
 
 #[test]
 fn test_issue_1() {
-    let mut data = DoubleBufferData::new(1, 2, FlashStrategy::new());
+    let mut data = DoubleBufferData::new(1, 2, SimpleStrategy::new());
 
     let writer = Writer::new(&mut data);
     let mut writer = DelayWriter::from_writer(writer);
