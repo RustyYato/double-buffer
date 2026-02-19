@@ -3,7 +3,7 @@
 //! see [`evmap`](https://docs.rs/evmap/latest/evmap/) for more details
 
 use core::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -22,10 +22,19 @@ const HAS_NEW_EPOCHS: u8 = 2;
 #[cfg(test)]
 mod test;
 
+struct Epoch {
+    current: AtomicUsize,
+    last: Cell<usize>,
+}
+
+// SAFETY: `last` is only accessed while we have a `&mut WriterId` inside `Strategy`
+// which means that there can't be any races
+unsafe impl Sync for Epoch {}
+
 pub struct EvMapStrategy<P> {
     flags: AtomicU8,
-    epochs: UnsafeCell<Vec<Arc<AtomicUsize>>>,
-    new_epochs_from_reader: Mutex<Vec<Arc<AtomicUsize>>>,
+    epochs: UnsafeCell<Vec<Arc<Epoch>>>,
+    new_epochs_from_reader: Mutex<Vec<Arc<Epoch>>>,
     parker: P,
 }
 
@@ -38,11 +47,9 @@ const _: () = {
     }
 };
 
-pub struct WriterId {
-    last_epochs: Vec<usize>,
-}
+pub struct WriterId(());
 pub struct ReaderId {
-    id: Arc<AtomicUsize>,
+    epoch: Arc<Epoch>,
 }
 
 impl<P: Parker> EvMapStrategy<P> {
@@ -56,7 +63,7 @@ impl<P: Parker> EvMapStrategy<P> {
     }
 
     #[allow(clippy::mut_from_ref)]
-    const fn epochs(&self, _writer: &WriterId) -> &mut Vec<Arc<AtomicUsize>> {
+    const fn epochs(&self, _writer: &WriterId) -> &mut Vec<Arc<Epoch>> {
         // SAFETY: this function is only called inside Strategy, at which point
         // if we have a `WriterId`, then no other thread can access this code
         // and no user-defined code can run while we have access to the writer id
@@ -72,6 +79,7 @@ impl<P: Parker> Default for EvMapStrategy<P> {
 
 pub struct Swap {
     start: usize,
+    end: usize,
 }
 
 // SAFETY: FlashStrategy when used as a strategy for a double buffer is thread safe
@@ -89,17 +97,18 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
 
     #[inline]
     unsafe fn create_writer_id(&mut self) -> Self::WriterId {
-        WriterId {
-            last_epochs: Vec::new(),
-        }
+        WriterId(())
     }
 
     #[inline]
     unsafe fn create_reader_id_from_writer(&self, writer: &Self::WriterId) -> Self::ReaderId {
         let readers = self.epochs(writer);
-        let reader = Arc::new(AtomicUsize::new(0));
+        let reader = Arc::new(Epoch {
+            current: AtomicUsize::new(0),
+            last: Cell::new(0),
+        });
         readers.push(reader.clone());
-        ReaderId { id: reader }
+        ReaderId { epoch: reader }
     }
 
     #[inline]
@@ -108,20 +117,28 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         self.flags.fetch_or(HAS_NEW_EPOCHS, Ordering::Relaxed);
-        let reader = Arc::new(AtomicUsize::new(0));
+        let reader = Arc::new(Epoch {
+            current: AtomicUsize::new(0),
+            last: Cell::new(0),
+        });
         readers.push(reader.clone());
-        ReaderId { id: reader }
+        ReaderId { epoch: reader }
     }
 
     #[cold]
     #[inline(never)]
     fn create_invalid_reader_id() -> Self::ReaderId {
-        static INVALID: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
+        static INVALID: OnceLock<Arc<Epoch>> = OnceLock::new();
 
-        let invalid = INVALID.get_or_init(|| Arc::new(AtomicUsize::new(0)));
+        let invalid = INVALID.get_or_init(|| {
+            Arc::new(Epoch {
+                current: AtomicUsize::new(0),
+                last: Cell::new(0),
+            })
+        });
 
         ReaderId {
-            id: invalid.clone(),
+            epoch: invalid.clone(),
         }
     }
 
@@ -164,14 +181,16 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
 
         // retain all non-unique readers
         epochs.retain(|epoch| !Arc::is_unique(epoch));
-        writer.last_epochs.resize(epochs.len(), 0);
 
-        for (epoch, last_epoch) in epochs.iter().zip(&mut writer.last_epochs) {
+        for epoch in epochs.iter() {
             // This needs to synchronize with [acquire|release]_read_guard (so needs `Acquire`)
-            *last_epoch = epoch.load(Ordering::Acquire);
+            epoch.last.set(epoch.current.load(Ordering::Acquire));
         }
 
-        Ok(Swap { start: 0 })
+        Ok(Swap {
+            start: 0,
+            end: epochs.len(),
+        })
     }
 
     unsafe fn is_swap_finished(&self, writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool {
@@ -183,14 +202,14 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
             panic!("read failed: tried to read from a read handle after the read guard was leaked")
         }
 
-        if reader.id.load(Ordering::Relaxed) % 2 != 0 {
+        if reader.epoch.current.load(Ordering::Relaxed) % 2 != 0 {
             read_failed()
         }
 
         // this needs to synchronize with `try_start_swap`/`is_swap_finished` (so needs at least `Release`) and
         // it needs to prevent reads from the `raw::ReaderGuard` from being reordered before this (so needs at least `Acquire`)
         // the cheapest ordering which satisfies this is `AcqRel`
-        reader.id.fetch_add(1, Ordering::AcqRel);
+        reader.epoch.current.fetch_add(1, Ordering::AcqRel);
         self.flags.load(Ordering::Acquire) & IS_SWAPPED != 0
     }
 
@@ -198,7 +217,7 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
         // this needs to synchronize with `try_start_swap`/`is_swap_finished` (so needs at least `Release`) and
         // it needs to prevent reads from the `raw::ReaderGuard` from being reordered after this (so needs at least `Release`)
         // the cheapest ordering which satisfies this is `Release`
-        reader.id.fetch_add(1, Ordering::Release);
+        reader.epoch.current.fetch_add(1, Ordering::Release);
         self.parker.wake();
     }
 }
@@ -262,17 +281,16 @@ unsafe impl AsyncStrategy for EvMapStrategy<AdaptiveParkToken> {
     }
 }
 
-fn is_swap_finished(epochs: &[Arc<AtomicUsize>], writer: &WriterId, swap: &mut Swap) -> bool {
-    for (i, (epoch, &last_epoch)) in
-        core::iter::zip(&epochs[swap.start..], &writer.last_epochs[swap.start..]).enumerate()
-    {
+fn is_swap_finished(epochs: &[Arc<Epoch>], _writer: &WriterId, swap: &mut Swap) -> bool {
+    for (i, epoch) in epochs[swap.start..swap.end].iter().enumerate() {
+        let last_epoch = epoch.last.get();
         // if the reader wasn't reading at the start of the swap, then it cannot be in the current buffer
         if last_epoch % 2 == 0 {
             continue;
         }
 
         // This needs to synchronize with [acquire|release]_read_guard (so needs `Acquire`)
-        let now = epoch.load(Ordering::Acquire);
+        let now = epoch.current.load(Ordering::Acquire);
 
         // swap.range.start < epochs.len() - i,  so
         // swap.range.start + i < epochs.len(),  so
@@ -284,7 +302,7 @@ fn is_swap_finished(epochs: &[Arc<AtomicUsize>], writer: &WriterId, swap: &mut S
         }
     }
 
-    swap.start = writer.last_epochs.len();
+    swap.start = swap.end;
 
     true
 }
