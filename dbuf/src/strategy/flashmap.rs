@@ -294,7 +294,6 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
     }
 }
 
-#[cfg(feature = "std")]
 // SAFETY: we check if is_swap_finished would return true before returning
 unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, Swap: Self::Swap) {
@@ -306,7 +305,6 @@ unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
     }
 }
 
-#[cfg(feature = "std")]
 // SAFETY: we check if is_swap_finished would return true before returning Poll::Ready
 unsafe impl AsyncStrategy for FlashStrategy<AdaptiveParkToken> {
     unsafe fn register_context(
