@@ -133,7 +133,7 @@ unsafe impl Strategy for EvMapStrategy {
         writer.last_epochs.resize(epochs.len(), 0);
 
         for (epoch, last_epoch) in epochs.iter().zip(&mut writer.last_epochs) {
-            // This needs to syncronize with [acquire|release]_read_guard (so needs `Acquire`)
+            // This needs to synchronize with [acquire|release]_read_guard (so needs `Acquire`)
             *last_epoch = epoch.load(Ordering::Acquire);
         }
 
@@ -154,7 +154,7 @@ unsafe impl Strategy for EvMapStrategy {
             read_failed()
         }
 
-        // this needs to syncronize with `try_start_swap`/`is_swap_finished` (so needs at least `Release`) and
+        // this needs to synchronize with `try_start_swap`/`is_swap_finished` (so needs at least `Release`) and
         // it needs to prevent reads from the `raw::ReaderGuard` from being reordered before this (so needs at least `Acquire`)
         // the cheapest ordering which satisfies this is `AcqRel`
         reader.id.fetch_add(1, Ordering::AcqRel);
@@ -162,7 +162,7 @@ unsafe impl Strategy for EvMapStrategy {
     }
 
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, _guard: Self::ReadGuard) {
-        // this needs to syncronize with `try_start_swap`/`is_swap_finished` (so needs at least `Release`) and
+        // this needs to synchronize with `try_start_swap`/`is_swap_finished` (so needs at least `Release`) and
         // it needs to prevent reads from the `raw::ReaderGuard` from being reordered after this (so needs at least `Release`)
         // the cheapest ordering which satisfies this is `Release`
         reader.id.fetch_add(1, Ordering::Release);
@@ -193,7 +193,7 @@ fn is_swap_finished(epochs: &[Arc<AtomicUsize>], writer: &WriterId, swap: &mut S
             continue;
         }
 
-        // This needs to syncronize with [acquire|release]_read_guard (so needs `Acquire`)
+        // This needs to synchronize with [acquire|release]_read_guard (so needs `Acquire`)
         let now = epoch.load(Ordering::Acquire);
 
         // swap.range.start < epochs.len() - i,  so

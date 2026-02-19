@@ -22,7 +22,6 @@
     )
 )]
 #![deny(clippy::perf, clippy::arithmetic_side_effects, unused_unsafe)]
-#![allow(clippy::declare_interior_mutable_const)]
 
 //! # dbuf
 //!

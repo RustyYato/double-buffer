@@ -29,7 +29,7 @@ impl<T: ?Sized> RawReference<'_, T> {
     }
 
     pub const fn as_ref(&self) -> &T {
-        // SAFETY: the creator of `RawReference` ensurest that the pointer is valid to convert to a reference
+        // SAFETY: the creator of `RawReference` ensure that the pointer is valid to convert to a reference
         unsafe { self.ptr.as_ref() }
     }
 }

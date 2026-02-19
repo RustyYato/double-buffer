@@ -33,7 +33,7 @@ impl GuardedUsize {
     /// or when the `readers` lock is currently held
     const unsafe fn read(&self) -> usize {
         // SAFETY: this can only conflict with `self.swap()`, but that can only be called
-        // when the reader lock is held, and since `self.read()` requries the lock be held
+        // when the reader lock is held, and since `self.read()` requires the lock be held
         // or not possible to hold, it's not possible to concurrently call with `swap`
         // and within a thread we don't hand out references to `GuardedUsize` so there is no issues
         // there as well

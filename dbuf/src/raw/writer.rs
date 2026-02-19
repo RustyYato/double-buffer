@@ -61,7 +61,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
 
     /// Get shared references to both buffers
     #[inline]
-    pub fn split(&self) -> Split<P::Buffer, P::Extras> {
+    pub fn split(&self) -> Split<'_, P::Buffer, P::Extras> {
         let dbuf = &*self.ptr;
 
         // SAFETY: self.id is valid (invariant of Self)
@@ -83,7 +83,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// Get a shared reference to the reader-half and an exclusive reference to the writer half of
     /// the buffers
     #[inline]
-    pub fn split_mut(&mut self) -> SplitMut<P::Buffer, P::Extras> {
+    pub fn split_mut(&mut self) -> SplitMut<'_, P::Buffer, P::Extras> {
         let dbuf = &*self.ptr;
 
         // SAFETY: self.id is valid (invariant of Self)
@@ -147,7 +147,7 @@ impl<P: DoubleBufferWriterPointer> Writer<P> {
     /// See the underlying strategy for details on when this may fail
     ///
     /// Note: you should not call `try_start_swap` twice, while it is not UB,
-    /// it may lead to unpredictiable behaviors, such as panics, dead-locks, and more.
+    /// it may lead to unpredictable behaviors, such as panics, dead-locks, and more.
     ///
     /// If you find yourself reaching for `try_start_swap`, instead try using `DelayWriter`,
     /// which provides a safe interface for `try_start_swap`
