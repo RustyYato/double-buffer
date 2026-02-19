@@ -161,7 +161,7 @@ unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
 
     #[inline]
     unsafe fn acquire_read_guard(&self, _reader: &mut Self::ReaderId) -> Self::ReadGuard {
-        let mut swapped = !self.which.load(Ordering::Acquire);
+        let mut swapped = self.which.load(Ordering::Acquire);
         let mut reader_count = &self.num_readers[swapped as usize];
 
         let mut num_readers = reader_count.load(Ordering::Acquire);
@@ -174,7 +174,7 @@ unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
                 // the writer locked the readers and swapped the buffers
                 // so refresh everything
 
-                swapped = !self.which.load(Ordering::Acquire);
+                swapped = self.which.load(Ordering::Acquire);
                 reader_count = &self.num_readers[swapped as usize];
                 num_readers = reader_count.load(Ordering::Acquire);
 
@@ -189,7 +189,7 @@ unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    let current_swapped = !self.which.load(Ordering::Acquire);
+                    let current_swapped = self.which.load(Ordering::Acquire);
                     if current_swapped == swapped {
                         return swapped;
                     }
