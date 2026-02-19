@@ -64,7 +64,6 @@ impl<P: DoubleBufferWriterPointer, O> OpWriter<P, O> {
         O: Operation<P::Buffer, P::Extras, Params>,
     {
         let writer = self.writer.afinish_swap().await;
-
         swap_buffers(writer, &mut self.op_log, &mut self.water_line, params);
         self.writer.start_swap();
     }

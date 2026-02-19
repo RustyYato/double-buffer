@@ -147,6 +147,14 @@ impl<'env, K, V, S: BuildHasher> Writer<'env, K, V, S> {
     {
         self.writer.swap_buffers(&mut ());
     }
+
+    pub async fn apublish(&mut self)
+    where
+        K: Hash + Eq + Clone,
+        V: Clone,
+    {
+        self.writer.aswap_buffers(&mut ()).await;
+    }
 }
 
 impl<K, V, S> Reader<K, V, S> {
