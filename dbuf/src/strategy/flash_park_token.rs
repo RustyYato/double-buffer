@@ -1,6 +1,5 @@
 use core::{cell::Cell, task::Waker};
 
-#[cfg(feature = "alloc")]
 use core::task::Context;
 
 #[cfg(feature = "std")]
@@ -11,9 +10,9 @@ use std::thread::Thread;
 pub struct ThreadParkToken(Cell<Option<Thread>>);
 #[derive(Default)]
 pub struct AsyncParkToken(Cell<Option<Waker>>);
-#[cfg(feature = "std")]
 #[derive(Default)]
 pub struct AdaptiveParkToken {
+    #[cfg(feature = "std")]
     pub(crate) thread_token: ThreadParkToken,
     pub(crate) async_token: AsyncParkToken,
 }
@@ -122,30 +121,22 @@ impl ThreadParkToken {
     pub const fn new() -> Self {
         Self(Cell::new(None))
     }
-
-    // pub(in crate::strategy) fn set(&self) {
-    //     self.0.set(Some(std::thread::current()))
-    // }
-
-    // pub(in crate::strategy) fn clear(&self) {
-    //     self.0.set(None)
-    // }
 }
 
 impl AsyncParkToken {
     pub const fn new() -> Self {
         Self(Cell::new(None))
     }
+}
+impl seal::Seal for () {}
+// SAFETY: Parker::wake is a nop
+unsafe impl Parker for () {
+    const NEW: Self = ();
+    type ContextKind = ();
 
-    // #[cfg(feature = "alloc")]
-    // pub(in crate::strategy) fn set(&self, ctx: &mut Context) {
-    //     self.0.set(Some(ctx.waker().clone()))
-    // }
-
-    // #[cfg(feature = "alloc")]
-    // pub(in crate::strategy) fn clear(&self) {
-    //     self.0.set(None);
-    // }
+    unsafe fn wake(&self) {}
+    fn set(&self, (): ()) {}
+    fn clear(&self) {}
 }
 
 impl seal::Seal for AsyncParkToken {}
@@ -185,13 +176,12 @@ unsafe impl Parker for AsyncParkToken {
     }
 }
 
-#[cfg(feature = "std")]
 impl seal::Seal for AdaptiveParkToken {}
-#[cfg(feature = "std")]
 // SAFETY: Parker::wake can't unwind for thread_token and async_token
 unsafe impl Parker for AdaptiveParkToken {
     #[doc(hidden)]
     const NEW: Self = AdaptiveParkToken {
+        #[cfg(feature = "std")]
         thread_token: ThreadParkToken::NEW,
         async_token: AsyncParkToken::NEW,
     };
@@ -201,6 +191,7 @@ unsafe impl Parker for AdaptiveParkToken {
     unsafe fn wake(&self) {
         // SAFETY: ensured by caller
         unsafe {
+            #[cfg(feature = "std")]
             self.thread_token.wake();
             self.async_token.wake();
         }
@@ -209,6 +200,7 @@ unsafe impl Parker for AdaptiveParkToken {
     #[inline]
     #[doc(hidden)]
     fn set(&self, ctx: &mut core::task::Context<'_>) {
+        #[cfg(feature = "std")]
         self.thread_token.set(());
         self.async_token.set(ctx);
     }
@@ -216,6 +208,7 @@ unsafe impl Parker for AdaptiveParkToken {
     #[inline]
     #[doc(hidden)]
     fn clear(&self) {
+        #[cfg(feature = "std")]
         self.thread_token.clear();
         self.async_token.clear();
     }

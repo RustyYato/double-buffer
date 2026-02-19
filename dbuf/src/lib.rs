@@ -214,3 +214,15 @@ mod vec_drain;
 pub use rc_box;
 #[cfg(feature = "triomphe")]
 pub use triomphe;
+
+// pub fn asm0(v: &mut alloc::vec::Vec<i32>, range: core::ops::RangeTo<usize>, f: fn(i32)) {
+//     for i in v.drain(range) {
+//         f(i);
+//     }
+// }
+
+// pub fn asm1(v: &mut alloc::vec::Vec<i32>, range: core::ops::RangeTo<usize>, f: fn(i32)) {
+//     for i in vec_drain::drain_until(v, range) {
+//         f(i);
+//     }
+// }

@@ -47,6 +47,14 @@ pub unsafe trait Parker: Sized + seal::Seal {
     fn wake(&self);
 }
 
+impl seal::Seal for () {}
+// SAFETY: Parker::wake is a nop
+unsafe impl Parker for () {
+    const NEW: Self = ();
+
+    fn wake(&self) {}
+}
+
 #[cfg(feature = "std")]
 impl seal::Seal for ThreadParkToken {}
 #[cfg(feature = "std")]

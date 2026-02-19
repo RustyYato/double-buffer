@@ -5,14 +5,14 @@ use super::EvMapStrategy;
 use crate::{
     delay::DelayWriter,
     raw::{DoubleBufferData, Writer},
-    strategy::flash_park_token::AsyncParkToken,
+    strategy::{atomic::park_token::ThreadParkToken, flash_park_token::AsyncParkToken},
 };
 
 use pollster::test as async_test;
 
 #[test]
 fn smoke() {
-    let mut state = DoubleBufferData::new(0, 1, EvMapStrategy::new());
+    let mut state = DoubleBufferData::new(0, 1, EvMapStrategy::<ThreadParkToken>::new());
     let mut writer = Writer::new(&mut state);
 
     let mut reader = writer.reader();
@@ -39,7 +39,7 @@ fn smoke() {
 
 #[test]
 fn test_issue_1() {
-    let mut data = DoubleBufferData::new(1, 2, EvMapStrategy::new());
+    let mut data = DoubleBufferData::new(1, 2, EvMapStrategy::<ThreadParkToken>::new());
 
     let writer = Writer::new(&mut data);
     let mut writer = DelayWriter::from_writer(writer);

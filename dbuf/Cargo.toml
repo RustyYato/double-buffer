@@ -7,7 +7,7 @@ edition = "2021"
 
 # default = ["std", "triomphe"]
 
-std = ["alloc"]
+std = ["alloc", "atomic-waker"]
 alloc = ["dep:rc-box"]
 triomphe = ["dep:triomphe"]
 atomic-waker = ["dep:atomic-waker"]

@@ -2,10 +2,16 @@
 //!
 //! see [`evmap`](https://docs.rs/evmap/latest/evmap/) for more details
 
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
+use core::{
+    cell::UnsafeCell,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
-use crate::interface::{BlockingStrategy, Strategy};
+use crate::{
+    interface::{AsyncStrategy, BlockingStrategy, Strategy},
+    strategy::atomic::park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadParkToken},
+};
 
 use alloc::vec::Vec;
 use triomphe::Arc;
@@ -13,16 +19,20 @@ use triomphe::Arc;
 #[cfg(test)]
 mod test;
 
-pub struct EvMapStrategy {
+pub struct EvMapStrategy<P> {
     is_swapped: AtomicBool,
-    epochs: Mutex<Vec<Arc<AtomicUsize>>>,
-    condvar: Condvar,
+    epochs: UnsafeCell<Vec<Arc<AtomicUsize>>>,
+    new_epochs_from_reader: Mutex<Vec<Arc<AtomicUsize>>>,
+    parker: P,
 }
 
-const _: () = {
-    const fn send_sync<T: Send + Sync>() {}
+// SAFETY: we mediate access to `epochs` via `WriterId` and `Strategy`
+unsafe impl<P: Sync> Sync for EvMapStrategy<P> {}
 
-    let _ = send_sync::<EvMapStrategy>;
+const _: () = {
+    const fn _send_sync<T: Send + Sync>() {
+        let _ = _send_sync::<EvMapStrategy<T>>;
+    }
 };
 
 pub struct WriterId {
@@ -32,25 +42,36 @@ pub struct ReaderId {
     id: Arc<AtomicUsize>,
 }
 
-impl EvMapStrategy {
+impl<P: Parker> EvMapStrategy<P> {
     pub const fn new() -> Self {
         Self {
             is_swapped: AtomicBool::new(false),
-            epochs: Mutex::new(Vec::new()),
-            condvar: Condvar::new(),
+            epochs: UnsafeCell::new(Vec::new()),
+            new_epochs_from_reader: Mutex::new(Vec::new()),
+            parker: P::NEW,
         }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    const fn epochs(&self, _writer: &WriterId) -> &mut Vec<Arc<AtomicUsize>> {
+        // SAFETY: this function is only called inside Strategy, at which point
+        // if we have a `WriterId`, then no other thread can access this code
+        // and no user-defined code can run while we have access to the writer id
+        unsafe { &mut *self.epochs.get() }
     }
 }
 
-impl Default for EvMapStrategy {
+impl<P: Parker> Default for EvMapStrategy<P> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EvMapStrategy {
+impl<P> EvMapStrategy<P> {
     fn create_reader_id(&self) -> ReaderId {
-        let mut readers = self.epochs.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut readers = (self.new_epochs_from_reader)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let reader = Arc::new(AtomicUsize::new(0));
         readers.push(reader.clone());
         ReaderId { id: reader }
@@ -65,7 +86,7 @@ pub struct Swap {
 // because finish_swap doesn't return while there are any readers in the
 // buffer that the writer (even if the readers are on other threads). see the module
 // docs for more information on the particular algorithm.
-unsafe impl Strategy for EvMapStrategy {
+unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
     type WriterId = WriterId;
     type ReaderId = ReaderId;
 
@@ -82,13 +103,21 @@ unsafe impl Strategy for EvMapStrategy {
     }
 
     #[inline]
-    unsafe fn create_reader_id_from_writer(&self, _writer: &Self::WriterId) -> Self::ReaderId {
-        self.create_reader_id()
+    unsafe fn create_reader_id_from_writer(&self, writer: &Self::WriterId) -> Self::ReaderId {
+        let readers = self.epochs(writer);
+        let reader = Arc::new(AtomicUsize::new(0));
+        readers.push(reader.clone());
+        ReaderId { id: reader }
     }
 
     #[inline]
     unsafe fn create_reader_id_from_reader(&self, _reader: &Self::ReaderId) -> Self::ReaderId {
-        self.create_reader_id()
+        let mut readers = (self.new_epochs_from_reader)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let reader = Arc::new(AtomicUsize::new(0));
+        readers.push(reader.clone());
+        ReaderId { id: reader }
     }
 
     #[cold]
@@ -126,7 +155,13 @@ unsafe impl Strategy for EvMapStrategy {
     ) -> Result<Self::Swap, Self::SwapError> {
         self.is_swapped.fetch_xor(true, Ordering::AcqRel);
 
-        let mut epochs = self.epochs.lock().unwrap_or_else(PoisonError::into_inner);
+        let epochs = self.epochs(writer);
+        epochs.append(
+            &mut self
+                .new_epochs_from_reader
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
 
         // retain all non-unique readers
         epochs.retain(|epoch| !Arc::is_unique(epoch));
@@ -141,8 +176,7 @@ unsafe impl Strategy for EvMapStrategy {
     }
 
     unsafe fn is_swap_finished(&self, writer: &mut Self::WriterId, swap: &mut Self::Swap) -> bool {
-        let epochs = self.epochs.lock().unwrap_or_else(PoisonError::into_inner);
-        is_swap_finished(&epochs, writer, swap)
+        is_swap_finished(self.epochs(writer), writer, swap)
     }
 
     unsafe fn acquire_read_guard(&self, reader: &mut Self::ReaderId) -> Self::ReadGuard {
@@ -166,20 +200,65 @@ unsafe impl Strategy for EvMapStrategy {
         // it needs to prevent reads from the `raw::ReaderGuard` from being reordered after this (so needs at least `Release`)
         // the cheapest ordering which satisfies this is `Release`
         reader.id.fetch_add(1, Ordering::Release);
-        self.condvar.notify_one();
+        self.parker.wake();
     }
 }
 
 // SAFETY: we check if is_swap_finished would return true before returning
-unsafe impl BlockingStrategy for EvMapStrategy {
+unsafe impl BlockingStrategy for EvMapStrategy<ThreadParkToken> {
     unsafe fn finish_swap(&self, writer: &mut Self::WriterId, mut swap: Self::Swap) {
-        let mut epochs = self.epochs.lock().unwrap_or_else(PoisonError::into_inner);
+        let epochs = self.epochs(writer).as_slice();
 
-        while !is_swap_finished(&epochs, writer, &mut swap) {
-            epochs = self
-                .condvar
-                .wait(epochs)
-                .unwrap_or_else(PoisonError::into_inner);
+        self.parker
+            .park_until(|| is_swap_finished(epochs, writer, &mut swap));
+    }
+}
+
+// SAFETY: we check if is_swap_finished would return true before returning
+unsafe impl AsyncStrategy for EvMapStrategy<AsyncParkToken> {
+    unsafe fn register_context(
+        &self,
+        writer: &mut Self::WriterId,
+        swap: &mut Self::Swap,
+        ctx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<()> {
+        let epochs = self.epochs(writer);
+
+        if is_swap_finished(epochs, writer, swap) {
+            core::task::Poll::Ready(())
+        } else {
+            self.parker.set(ctx);
+            core::task::Poll::Pending
+        }
+    }
+}
+
+// SAFETY: we check if is_swap_finished would return true before returning
+unsafe impl BlockingStrategy for EvMapStrategy<AdaptiveParkToken> {
+    unsafe fn finish_swap(&self, writer: &mut Self::WriterId, mut swap: Self::Swap) {
+        let epochs = self.epochs(writer).as_slice();
+
+        self.parker
+            .thread_token
+            .park_until(|| is_swap_finished(epochs, writer, &mut swap));
+    }
+}
+
+// SAFETY: we check if is_swap_finished would return true before returning
+unsafe impl AsyncStrategy for EvMapStrategy<AdaptiveParkToken> {
+    unsafe fn register_context(
+        &self,
+        writer: &mut Self::WriterId,
+        swap: &mut Self::Swap,
+        ctx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<()> {
+        let epochs = self.epochs(writer);
+
+        if is_swap_finished(epochs, writer, swap) {
+            core::task::Poll::Ready(())
+        } else {
+            self.parker.async_token.set(ctx);
+            core::task::Poll::Pending
         }
     }
 }

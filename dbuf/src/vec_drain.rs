@@ -9,12 +9,12 @@ pub struct Drain<'a, T> {
     lt: PhantomData<&'a mut Vec<T>>,
 }
 
-pub fn drain_until<T>(vec: &mut Vec<T>, n: RangeTo<usize>) -> Drain<'_, T> {
+pub(crate) fn drain_until<T>(vec: &mut Vec<T>, n: RangeTo<usize>) -> Drain<'_, T> {
     const { assert!(core::mem::size_of::<T>() > 0) }
     let _ = &vec[n];
     let old_len = vec.len();
     // SAFETY: the index above validates that the range is in bounds
-    unsafe { vec.set_len(n.end) };
+    unsafe { vec.set_len(0) };
 
     let range = vec.as_mut_ptr_range();
 
