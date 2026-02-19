@@ -193,6 +193,9 @@ unsafe impl<P: Parker> Strategy for AtomicStrategy<P> {
                     if current_swapped == swapped {
                         return swapped;
                     }
+                    // we should refresh everything if we get here, since this means that a swap
+                    // completed in the background
+                    num_readers = u64::MAX;
                     reader_count.fetch_sub(1, Ordering::Release);
                 }
                 Err(current) => num_readers = current,
