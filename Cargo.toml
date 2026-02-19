@@ -2,4 +2,7 @@
 
 resolver = "2"
 
-members = [ "chmap","dbuf" , "split-arc"]
+members = [ "chmap", "chmap-perf","dbuf" , "split-arc"]
+
+[profile.release]
+debug = true

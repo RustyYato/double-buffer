@@ -9,6 +9,7 @@ use std::{
 use dbuf::interface::Strategy;
 use hashbrown::HashTable;
 
+pub type DefaultHasher = RandomState;
 pub type DefaultStrategy =
     dbuf::strategy::flashmap::FlashStrategy<dbuf::strategy::flash_park_token::AdaptiveParkToken>;
 
@@ -17,20 +18,20 @@ type TablePointer<T, H, S> =
     dbuf::triomphe::OffsetArc<dbuf::raw::DoubleBufferData<HashTable<T>, S, H>>;
 
 #[allow(clippy::type_complexity)]
-pub struct Writer<'env, K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+pub struct Writer<'env, K, V, H = DefaultHasher, S: Strategy = DefaultStrategy> {
     writer: dbuf::op::OpWriter<TablePointer<(K, V), H, S>, HashTableOperation<'env, K, V, H>>,
 }
 
-pub struct Reader<K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+pub struct Reader<K, V, H = DefaultHasher, S: Strategy = DefaultStrategy> {
     reader: dbuf::raw::Reader<TablePointer<(K, V), H, S>>,
 }
 
 #[allow(clippy::type_complexity)]
-pub struct TableGuard<'a, K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+pub struct TableGuard<'a, K, V, H = DefaultHasher, S: Strategy = DefaultStrategy> {
     reader: dbuf::raw::ReaderGuard<'a, HashTable<(K, V)>, TablePointer<(K, V), H, S>>,
 }
 
-pub struct ReadGuard<'a, T: ?Sized, K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+pub struct ReadGuard<'a, T: ?Sized, K, V, H = DefaultHasher, S: Strategy = DefaultStrategy> {
     reader: dbuf::raw::ReaderGuard<'a, T, TablePointer<(K, V), H, S>>,
 }
 
@@ -58,7 +59,7 @@ pub enum HashTableOperation<'env, K, V, H> {
 
 impl<K, V> Writer<'_, K, V> {
     pub fn new() -> Self {
-        Self::with_hasher_and_strategy(RandomState::new(), DefaultStrategy::new())
+        Self::with_hasher_and_strategy(DefaultHasher::new(), DefaultStrategy::new())
     }
 }
 
@@ -154,17 +155,43 @@ impl<'env, K, V, H: BuildHasher, S: Strategy> Writer<'env, K, V, H, S> {
     {
         self.writer.aswap_buffers(&mut ()).await;
     }
+
+    pub fn try_publish(&mut self) -> Result<(), S::SwapError>
+    where
+        K: Hash + Eq + Clone,
+        V: Clone,
+        S: dbuf::interface::BlockingStrategy,
+    {
+        self.writer.try_swap_buffers(&mut ())
+    }
+
+    pub async fn try_apublish(&mut self) -> Result<(), S::SwapError>
+    where
+        K: Hash + Eq + Clone,
+        V: Clone,
+        S: dbuf::interface::AsyncStrategy,
+    {
+        self.writer.try_aswap_buffers(&mut ()).await
+    }
 }
 
-impl<K, V, S> Reader<K, V, S> {
-    pub fn load(&mut self) -> TableGuard<'_, K, V, S> {
+impl<K, V, H, S: Strategy> Reader<K, V, H, S> {
+    pub fn load(&mut self) -> TableGuard<'_, K, V, H, S> {
         TableGuard {
             reader: self.reader.read(),
         }
     }
 }
 
-impl<'a, K, V, S: BuildHasher> TableGuard<'a, K, V, S> {
+impl<K, V, H, S: Strategy> Clone for Reader<K, V, H, S> {
+    fn clone(&self) -> Self {
+        Self {
+            reader: self.reader.clone(),
+        }
+    }
+}
+
+impl<'a, K, V, H: BuildHasher, S: Strategy> TableGuard<'a, K, V, H, S> {
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         Q: ?Sized + Hash + Eq,
@@ -200,7 +227,7 @@ impl<'a, K, V, S: BuildHasher> TableGuard<'a, K, V, S> {
         }
     }
 
-    pub fn into_get<Q>(self, key: &Q) -> Result<ReadGuard<'a, V, K, V, S>, Self>
+    pub fn into_get<Q>(self, key: &Q) -> Result<ReadGuard<'a, V, K, V, H, S>, Self>
     where
         Q: ?Sized + Hash + Eq,
         K: Borrow<Q>,

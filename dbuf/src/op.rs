@@ -2,7 +2,7 @@
 
 use crate::{
     delay::DelayWriter,
-    interface::{AsyncStrategy, BlockingStrategy, DoubleBufferWriterPointer, Strategy},
+    interface::{AsyncStrategy, BlockingStrategy, DoubleBufferWriterPointer, Strategy, SwapError},
     raw,
 };
 
@@ -68,6 +68,32 @@ impl<P: DoubleBufferWriterPointer, O> OpWriter<P, O> {
         self.writer.start_swap();
     }
 
+    pub fn try_swap_buffers<Params: ?Sized>(
+        &mut self,
+        params: &mut Params,
+    ) -> Result<(), SwapError<P::Strategy>>
+    where
+        P::Strategy: BlockingStrategy + Strategy,
+        O: Operation<P::Buffer, P::Extras, Params>,
+    {
+        let writer = self.writer.finish_swap();
+        swap_buffers(writer, &mut self.op_log, &mut self.water_line, params);
+        self.writer.try_start_swap().map(drop)
+    }
+
+    pub async fn try_aswap_buffers<Params: ?Sized>(
+        &mut self,
+        params: &mut Params,
+    ) -> Result<(), SwapError<P::Strategy>>
+    where
+        P::Strategy: AsyncStrategy + Strategy,
+        O: Operation<P::Buffer, P::Extras, Params>,
+    {
+        let writer = self.writer.afinish_swap().await;
+        swap_buffers(writer, &mut self.op_log, &mut self.water_line, params);
+        self.writer.try_start_swap().map(drop)
+    }
+
     #[inline]
     pub fn push(&mut self, op: O) {
         self.op_log.push(SyncWrapper::new(op))
@@ -104,7 +130,7 @@ fn swap_buffers<
     water_line: &mut usize,
     params: &mut Params,
 ) where
-    P::Strategy: Strategy<SwapError = core::convert::Infallible>,
+    P::Strategy: Strategy,
 {
     let split = writer.split_mut();
     let buffer = split.write;
