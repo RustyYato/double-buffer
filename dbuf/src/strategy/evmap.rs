@@ -4,7 +4,7 @@
 
 use core::{
     cell::UnsafeCell,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 use std::sync::{Mutex, OnceLock, PoisonError};
 
@@ -16,11 +16,14 @@ use crate::{
 use alloc::vec::Vec;
 use triomphe::Arc;
 
+const IS_SWAPPED: u8 = 1;
+const HAS_NEW_EPOCHS: u8 = 2;
+
 #[cfg(test)]
 mod test;
 
 pub struct EvMapStrategy<P> {
-    is_swapped: AtomicBool,
+    flags: AtomicU8,
     epochs: UnsafeCell<Vec<Arc<AtomicUsize>>>,
     new_epochs_from_reader: Mutex<Vec<Arc<AtomicUsize>>>,
     parker: P,
@@ -45,7 +48,7 @@ pub struct ReaderId {
 impl<P: Parker> EvMapStrategy<P> {
     pub const fn new() -> Self {
         Self {
-            is_swapped: AtomicBool::new(false),
+            flags: AtomicU8::new(0),
             epochs: UnsafeCell::new(Vec::new()),
             new_epochs_from_reader: Mutex::new(Vec::new()),
             parker: P::NEW,
@@ -64,17 +67,6 @@ impl<P: Parker> EvMapStrategy<P> {
 impl<P: Parker> Default for EvMapStrategy<P> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<P> EvMapStrategy<P> {
-    fn create_reader_id(&self) -> ReaderId {
-        let mut readers = (self.new_epochs_from_reader)
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let reader = Arc::new(AtomicUsize::new(0));
-        readers.push(reader.clone());
-        ReaderId { id: reader }
     }
 }
 
@@ -115,6 +107,7 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
         let mut readers = (self.new_epochs_from_reader)
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        self.flags.fetch_or(HAS_NEW_EPOCHS, Ordering::Relaxed);
         let reader = Arc::new(AtomicUsize::new(0));
         readers.push(reader.clone());
         ReaderId { id: reader }
@@ -142,7 +135,7 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
         // So there can be no race between that write and this read.
         //
         // And it is fine to race two (non-atomic) reads
-        unsafe { core::ptr::read(&self.is_swapped).into_inner() }
+        unsafe { core::ptr::read(&self.flags).into_inner() & IS_SWAPPED != 0 }
     }
 
     unsafe fn is_swapped(&self, _reader: &mut Self::ReaderId, guard: &Self::ReadGuard) -> bool {
@@ -153,15 +146,21 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
         &self,
         writer: &mut Self::WriterId,
     ) -> Result<Self::Swap, Self::SwapError> {
-        self.is_swapped.fetch_xor(true, Ordering::AcqRel);
+        let flags = self.flags.fetch_xor(IS_SWAPPED, Ordering::AcqRel);
 
         let epochs = self.epochs(writer);
-        epochs.append(
-            &mut self
+
+        // if no readers cloned themselves, then we can avoid locking the
+        // mutex here at minimal cost
+        if flags & HAS_NEW_EPOCHS != 0 {
+            let mut new_epochs = self
                 .new_epochs_from_reader
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
+                .unwrap_or_else(PoisonError::into_inner);
+            self.flags.fetch_and(!HAS_NEW_EPOCHS, Ordering::Relaxed);
+
+            epochs.append(&mut new_epochs);
+        }
 
         // retain all non-unique readers
         epochs.retain(|epoch| !Arc::is_unique(epoch));
@@ -192,7 +191,7 @@ unsafe impl<P: Parker> Strategy for EvMapStrategy<P> {
         // it needs to prevent reads from the `raw::ReaderGuard` from being reordered before this (so needs at least `Acquire`)
         // the cheapest ordering which satisfies this is `AcqRel`
         reader.id.fetch_add(1, Ordering::AcqRel);
-        self.is_swapped.load(Ordering::Acquire)
+        self.flags.load(Ordering::Acquire) & IS_SWAPPED != 0
     }
 
     unsafe fn release_read_guard(&self, reader: &mut Self::ReaderId, _guard: Self::ReadGuard) {
