@@ -14,7 +14,7 @@ use crate::interface::{AsyncStrategy, BlockingStrategy, Strategy};
 use alloc::vec::Vec;
 use triomphe::Arc;
 
-use super::flash_park_token::{AdaptiveParkToken, AsyncParkToken, Parker, ThreadParkToken};
+use super::flash_park_token::{AdaptiveParkToken, AsyncParkToken, Ctx, Parker, ThreadParkToken};
 
 #[cfg(test)]
 mod test;
@@ -290,13 +290,7 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
         Swap: &mut Self::Swap,
         ctx: &mut core::task::Context<'_>,
     ) -> Poll<()> {
-        self.poll(|should_set| {
-            if should_set {
-                self.parker.set(ctx)
-            } else {
-                self.parker.clear();
-            }
-        })
+        self.poll(ctx, &self.parker)
     }
 }
 
@@ -304,16 +298,7 @@ unsafe impl AsyncStrategy for FlashStrategy<AsyncParkToken> {
 // SAFETY: we check if is_swap_finished would return true before returning
 unsafe impl BlockingStrategy for FlashStrategy<ThreadParkToken> {
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, Swap: Self::Swap) {
-        if self
-            .poll(|should_set| {
-                if should_set {
-                    self.parker.set()
-                } else {
-                    self.parker.clear();
-                }
-            })
-            .is_pending()
-        {
+        if self.poll((), &self.parker).is_pending() {
             while self.residual.load(Ordering::Relaxed) != 0 {
                 std::thread::park();
             }
@@ -330,29 +315,14 @@ unsafe impl AsyncStrategy for FlashStrategy<AdaptiveParkToken> {
         Swap: &mut Self::Swap,
         ctx: &mut core::task::Context<'_>,
     ) -> Poll<()> {
-        self.poll(|should_set| {
-            if should_set {
-                self.parker.async_token.set(ctx)
-            } else {
-                self.parker.async_token.clear();
-            }
-        })
+        self.poll(ctx, &self.parker.async_token)
     }
 }
 
 // SAFETY: we check if is_swap_finished would return true before returning
 unsafe impl BlockingStrategy for FlashStrategy<AdaptiveParkToken> {
     unsafe fn finish_swap(&self, _writer: &mut Self::WriterId, Swap: Self::Swap) {
-        if self
-            .poll(|should_set| {
-                if should_set {
-                    self.parker.thread_token.set()
-                } else {
-                    self.parker.thread_token.clear();
-                }
-            })
-            .is_pending()
-        {
+        if self.poll((), &self.parker.thread_token).is_pending() {
             while self.residual.load(Ordering::Relaxed) != 0 {
                 std::thread::park();
             }
@@ -361,16 +331,16 @@ unsafe impl BlockingStrategy for FlashStrategy<AdaptiveParkToken> {
 }
 
 impl<T> FlashStrategy<T> {
-    fn poll(&self, mut setup: impl FnMut(bool)) -> Poll<()> {
+    fn poll<P: Parker>(&self, ctx: Ctx<P::ContextKind>, parker: &P) -> Poll<()> {
         if self.residual.load(Ordering::Acquire) == 0 {
             return Poll::Ready(());
         }
 
-        setup(true);
+        parker.set(ctx);
         let residual = self.residual.load(Ordering::Acquire);
         // if all residual readers finished already
         if residual == 0 {
-            setup(false);
+            parker.clear();
             return Poll::Ready(());
         }
 

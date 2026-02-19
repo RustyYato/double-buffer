@@ -39,6 +39,29 @@ mod seal {
     pub trait Seal {}
 }
 
+pub trait ContextKind {
+    type Context<'a, 'b>
+    where
+        'a: 'b;
+}
+
+pub struct ContextFamily;
+
+impl ContextKind for () {
+    type Context<'a, 'b>
+        = ()
+    where
+        'a: 'b;
+}
+impl ContextKind for ContextFamily {
+    type Context<'a, 'b>
+        = &'b mut Context<'a>
+    where
+        'a: 'b;
+}
+
+pub(in crate::strategy) type Ctx<'a, 'b, C> = <C as ContextKind>::Context<'a, 'b>;
+
 /// This is an internal trait, do not use it directly.
 ///
 /// It only exists as an implementation detail to abstract over [`ThreadParkToken`],
@@ -52,9 +75,17 @@ mod seal {
 pub unsafe trait Parker: Sized + seal::Seal {
     #[doc(hidden)]
     const NEW: Self;
+    #[doc(hidden)]
+    type ContextKind: ContextKind;
 
     #[doc(hidden)]
     unsafe fn wake(&self);
+
+    #[doc(hidden)]
+    fn set(&self, ctx: Ctx<Self::ContextKind>);
+
+    #[doc(hidden)]
+    fn clear(&self);
 }
 
 #[cfg(feature = "std")]
@@ -64,12 +95,25 @@ impl seal::Seal for ThreadParkToken {}
 unsafe impl Parker for ThreadParkToken {
     #[doc(hidden)]
     const NEW: Self = ThreadParkToken(Cell::new(None));
+    type ContextKind = ();
 
     #[doc(hidden)]
     unsafe fn wake(&self) {
         if let Some(thread) = self.0.take() {
             thread.unpark()
         }
+    }
+
+    #[inline]
+    #[doc(hidden)]
+    fn set(&self, _ctx: ()) {
+        self.0.set(Some(std::thread::current()))
+    }
+
+    #[inline]
+    #[doc(hidden)]
+    fn clear(&self) {
+        self.0.set(None)
     }
 }
 
@@ -79,13 +123,13 @@ impl ThreadParkToken {
         Self(Cell::new(None))
     }
 
-    pub(in crate::strategy) fn set(&self) {
-        self.0.set(Some(std::thread::current()))
-    }
+    // pub(in crate::strategy) fn set(&self) {
+    //     self.0.set(Some(std::thread::current()))
+    // }
 
-    pub(in crate::strategy) fn clear(&self) {
-        self.0.set(None)
-    }
+    // pub(in crate::strategy) fn clear(&self) {
+    //     self.0.set(None)
+    // }
 }
 
 impl AsyncParkToken {
@@ -93,15 +137,15 @@ impl AsyncParkToken {
         Self(Cell::new(None))
     }
 
-    #[cfg(feature = "alloc")]
-    pub(in crate::strategy) fn set(&self, ctx: &mut Context) {
-        self.0.set(Some(ctx.waker().clone()))
-    }
+    // #[cfg(feature = "alloc")]
+    // pub(in crate::strategy) fn set(&self, ctx: &mut Context) {
+    //     self.0.set(Some(ctx.waker().clone()))
+    // }
 
-    #[cfg(feature = "alloc")]
-    pub(in crate::strategy) fn clear(&self) {
-        self.0.set(None);
-    }
+    // #[cfg(feature = "alloc")]
+    // pub(in crate::strategy) fn clear(&self) {
+    //     self.0.set(None);
+    // }
 }
 
 impl seal::Seal for AsyncParkToken {}
@@ -109,6 +153,7 @@ impl seal::Seal for AsyncParkToken {}
 unsafe impl Parker for AsyncParkToken {
     #[doc(hidden)]
     const NEW: Self = Self::new();
+    type ContextKind = ContextFamily;
 
     #[doc(hidden)]
     unsafe fn wake(&self) {
@@ -126,6 +171,18 @@ unsafe impl Parker for AsyncParkToken {
         }
         core::mem::forget(guard);
     }
+
+    #[inline]
+    #[doc(hidden)]
+    fn set(&self, ctx: &mut core::task::Context<'_>) {
+        self.0.set(Some(ctx.waker().clone()))
+    }
+
+    #[inline]
+    #[doc(hidden)]
+    fn clear(&self) {
+        self.0.set(None)
+    }
 }
 
 #[cfg(feature = "std")]
@@ -138,6 +195,7 @@ unsafe impl Parker for AdaptiveParkToken {
         thread_token: ThreadParkToken::NEW,
         async_token: AsyncParkToken::NEW,
     };
+    type ContextKind = ContextFamily;
 
     #[doc(hidden)]
     unsafe fn wake(&self) {
@@ -146,5 +204,19 @@ unsafe impl Parker for AdaptiveParkToken {
             self.thread_token.wake();
             self.async_token.wake();
         }
+    }
+
+    #[inline]
+    #[doc(hidden)]
+    fn set(&self, ctx: &mut core::task::Context<'_>) {
+        self.thread_token.set(());
+        self.async_token.set(ctx);
+    }
+
+    #[inline]
+    #[doc(hidden)]
+    fn clear(&self) {
+        self.thread_token.clear();
+        self.async_token.clear();
     }
 }
