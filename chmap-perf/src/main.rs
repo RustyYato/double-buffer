@@ -11,6 +11,7 @@ use std::{
 use color_eyre::owo_colors::colors::xterm::ConiferGreen;
 use dbuf::interface::{BlockingStrategy, Strategy};
 use rand::seq::{IndexedRandom, IteratorRandom};
+use tracing::{debug, info};
 
 #[derive(clap::Parser)]
 struct Args {
@@ -201,25 +202,19 @@ fn main() -> eyre::Result<()> {
 
     let thread_ops = thread_ops.as_slice();
 
-    let start = Instant::now();
     run::<
         dbuf::strategy::flashmap::FlashStrategy<
             dbuf::strategy::flash_park_token::AdaptiveParkToken,
         >,
     >(thread_ops);
-    dbg!(start.elapsed());
 
-    let start = Instant::now();
     run::<dbuf::strategy::evmap::EvMapStrategy<dbuf::strategy::atomic::park_token::ThreadParkToken>>(
         thread_ops,
     );
-    dbg!(start.elapsed());
 
-    let start = Instant::now();
     run::<
         dbuf::strategy::atomic::AtomicStrategy<dbuf::strategy::atomic::park_token::ThreadParkToken>,
     >(thread_ops);
-    dbg!(start.elapsed());
 
     Ok(())
 }
@@ -241,8 +236,11 @@ where
     S::Swap: Send + Sync,
     S::ReaderId: Send,
 {
-    println!("{:=>160}", "");
-    println!("{}", core::any::type_name::<S>());
+    let start = Instant::now();
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        println!("{:=>160}", "");
+    }
+    debug!("{}", core::any::type_name::<S>());
     let writer = chmap::Writer::<_, _, chmap::DefaultHasher, S>::default();
     let reader = writer.reader();
     let writer = &RwLock::new(writer);
@@ -281,7 +279,7 @@ where
                             }
                         }
                     }
-                    println!("THREAD COMPLETE* {name}")
+                    debug!("THREAD COMPLETE* {name}")
                 });
             } else {
                 let mut reader = reader.clone();
@@ -308,9 +306,10 @@ where
                             | MapOps::Insert { key: _, val: _ } => unreachable!(),
                         }
                     }
-                    println!("THREAD COMPLETE {name}")
+                    debug!("THREAD COMPLETE {name}")
                 });
             }
         }
     });
+    info!(time = ?start.elapsed(), "{}", core::any::type_name::<S>());
 }
