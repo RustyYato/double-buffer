@@ -71,11 +71,12 @@ fn main() -> eyre::Result<()> {
     let config: Vec<ConfigEntry> = serde_json::from_slice(&config)?;
 
     let mut thread_ops = Vec::new();
+    let total_ops;
 
     {
         let mut map = HashMap::<u32, u32>::new();
 
-        let total_ops = config
+        total_ops = config
             .iter()
             .try_fold(0, |acc, entry| entry.ops.checked_add(acc))
             .expect("Tried to add too many ops");
@@ -202,19 +203,23 @@ fn main() -> eyre::Result<()> {
 
     let thread_ops = thread_ops.as_slice();
 
-    run::<
+    run_chmap::<
         dbuf::strategy::flashmap::FlashStrategy<
             dbuf::strategy::flash_park_token::AdaptiveParkToken,
         >,
     >(thread_ops);
 
-    run::<dbuf::strategy::evmap::EvMapStrategy<dbuf::strategy::atomic::park_token::ThreadParkToken>>(
-        thread_ops,
-    );
+    run_chmap::<
+        dbuf::strategy::evmap::EvMapStrategy<dbuf::strategy::atomic::park_token::ThreadParkToken>,
+    >(thread_ops);
 
-    run::<
+    run_chmap::<
         dbuf::strategy::atomic::AtomicStrategy<dbuf::strategy::atomic::park_token::ThreadParkToken>,
     >(thread_ops);
+
+    run_evmap(thread_ops);
+    run_flashmap(thread_ops);
+    run_dashmap(thread_ops);
 
     Ok(())
 }
@@ -229,7 +234,7 @@ enum MapOps {
     Insert { key: u32, val: u32 },
 }
 
-fn run<S>(thread_ops: &[(bool, &str, Vec<MapOps>)])
+fn run_chmap<S>(thread_ops: &[(bool, &str, Vec<MapOps>)])
 where
     S: Send + Sync + BlockingStrategy + Default,
     S::WriterId: Send + Sync,
@@ -254,7 +259,7 @@ where
                     for op in thread {
                         match *op {
                             MapOps::Sync => {
-                                writer.write().unwrap().try_publish();
+                                let _ = writer.write().unwrap().try_publish();
                             }
                             MapOps::Read {
                                 key,
@@ -312,4 +317,231 @@ where
         }
     });
     info!(time = ?start.elapsed(), "{}", core::any::type_name::<S>());
+}
+
+fn run_flashmap(thread_ops: &[(bool, &str, Vec<MapOps>)]) {
+    let start = Instant::now();
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        println!("{:=>160}", "");
+    }
+    debug!("flashmap");
+
+    let (writer, reader) = unsafe { flashmap::with_hasher(chmap::DefaultHasher::new()) };
+    let writer = &Mutex::new(writer);
+
+    std::thread::scope(|s| {
+        for &(use_writer, name, ref thread) in thread_ops {
+            let thread = thread.as_slice();
+
+            if use_writer {
+                let reader = reader.clone();
+                s.spawn(move || {
+                    for op in thread {
+                        match *op {
+                            MapOps::Sync => {
+                                writer.lock().unwrap().synchronize();
+                            }
+                            MapOps::Read {
+                                key,
+                                expected_val: _,
+                            } => {
+                                black_box(reader.guard().get(&key));
+                            }
+                            MapOps::ReadNotExists { key } => {
+                                black_box(reader.guard().get(&key));
+                            }
+                            MapOps::Remove {
+                                key,
+                                expected_val: _,
+                            } => {
+                                writer.lock().unwrap().guard().remove(key);
+                            }
+                            MapOps::RemoveNotExists { key } => {
+                                writer.lock().unwrap().guard().remove(key);
+                            }
+                            MapOps::Insert { key, val } => {
+                                writer.lock().unwrap().guard().insert(key, val);
+                            }
+                        }
+                    }
+                    debug!("THREAD COMPLETE* {name}")
+                });
+            } else {
+                let reader = reader.clone();
+                s.spawn(move || {
+                    for op in thread {
+                        match *op {
+                            MapOps::Read {
+                                key,
+                                expected_val: val,
+                            } => {
+                                black_box(reader.guard().get(&key));
+                            }
+                            MapOps::ReadNotExists { key } => {
+                                assert_eq!(reader.guard().get(&key), None);
+                            }
+                            MapOps::Sync
+                            | MapOps::Remove {
+                                key: _,
+                                expected_val: _,
+                            }
+                            | MapOps::RemoveNotExists { key: _ }
+                            | MapOps::Insert { key: _, val: _ } => unreachable!(),
+                        }
+                    }
+                    debug!("THREAD COMPLETE {name}")
+                });
+            }
+        }
+    });
+    info!(time = ?start.elapsed(), "flashmap");
+}
+
+fn run_evmap(thread_ops: &[(bool, &str, Vec<MapOps>)]) {
+    let start = Instant::now();
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        println!("{:=>160}", "");
+    }
+    debug!("evmap");
+    let (writer, reader) = unsafe { evmap::with_hasher((), chmap::DefaultHasher::new()) };
+    let writer = &Mutex::new(writer);
+
+    std::thread::scope(|s| {
+        for &(use_writer, name, ref thread) in thread_ops {
+            let thread = thread.as_slice();
+
+            if use_writer {
+                let reader = reader.clone();
+                s.spawn(move || {
+                    for op in thread {
+                        match *op {
+                            MapOps::Sync => {
+                                writer.lock().unwrap().publish();
+                            }
+                            MapOps::Read {
+                                key,
+                                expected_val: _,
+                            } => {
+                                black_box(reader.get(&key));
+                            }
+                            MapOps::ReadNotExists { key } => {
+                                black_box(reader.get(&key));
+                            }
+                            MapOps::Remove {
+                                key,
+                                expected_val: _,
+                            } => {
+                                writer.lock().unwrap().remove_entry(key);
+                            }
+                            MapOps::RemoveNotExists { key } => {
+                                writer.lock().unwrap().remove_entry(key);
+                            }
+                            MapOps::Insert { key, val } => {
+                                writer.lock().unwrap().insert(key, val);
+                            }
+                        }
+                    }
+                    debug!("THREAD COMPLETE* {name}")
+                });
+            } else {
+                let reader = reader.clone();
+                s.spawn(move || {
+                    for op in thread {
+                        match *op {
+                            MapOps::Read {
+                                key,
+                                expected_val: val,
+                            } => {
+                                black_box(reader.get(&key));
+                            }
+                            MapOps::ReadNotExists { key } => {
+                                assert!(reader.get(&key).is_none());
+                            }
+                            MapOps::Sync
+                            | MapOps::Remove {
+                                key: _,
+                                expected_val: _,
+                            }
+                            | MapOps::RemoveNotExists { key: _ }
+                            | MapOps::Insert { key: _, val: _ } => unreachable!(),
+                        }
+                    }
+                    debug!("THREAD COMPLETE {name}")
+                });
+            }
+        }
+    });
+    info!(time = ?start.elapsed(), "evmap");
+}
+
+fn run_dashmap(thread_ops: &[(bool, &str, Vec<MapOps>)]) {
+    let start = Instant::now();
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        println!("{:=>160}", "");
+    }
+    debug!("dashmap");
+    let map = &dashmap::DashMap::with_hasher(chmap::DefaultHasher::new());
+
+    std::thread::scope(|s| {
+        for &(use_writer, name, ref thread) in thread_ops {
+            let thread = thread.as_slice();
+
+            if use_writer {
+                s.spawn(move || {
+                    for op in thread {
+                        match *op {
+                            MapOps::Sync => {}
+                            MapOps::Read {
+                                key,
+                                expected_val: _,
+                            } => {
+                                black_box(map.get(&key));
+                            }
+                            MapOps::ReadNotExists { key } => {
+                                black_box(map.get(&key));
+                            }
+                            MapOps::Remove {
+                                key,
+                                expected_val: _,
+                            } => {
+                                map.remove(&key);
+                            }
+                            MapOps::RemoveNotExists { key } => {
+                                map.remove(&key);
+                            }
+                            MapOps::Insert { key, val } => {
+                                map.insert(key, val);
+                            }
+                        }
+                    }
+                    debug!("THREAD COMPLETE* {name}")
+                });
+            } else {
+                s.spawn(move || {
+                    for op in thread {
+                        match *op {
+                            MapOps::Read {
+                                key,
+                                expected_val: val,
+                            } => {
+                                black_box(map.get(&key));
+                            }
+                            MapOps::ReadNotExists { key } => {
+                                assert!(map.get(&key).is_none());
+                            }
+                            MapOps::Sync
+                            | MapOps::Remove {
+                                key: _,
+                                expected_val: _,
+                            }
+                            | MapOps::RemoveNotExists { key: _ }
+                            | MapOps::Insert { key: _, val: _ } => unreachable!(),
+                        }
+                    }
+                    debug!("THREAD COMPLETE {name}")
+                });
+            }
+        }
+    });
+    info!(time = ?start.elapsed(), "dashmap");
 }
