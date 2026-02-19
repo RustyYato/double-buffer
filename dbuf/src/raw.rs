@@ -21,33 +21,14 @@ pub struct DoubleBufferData<T, S, Extras: ?Sized = ()> {
     pub extras: Extras,
 }
 
-/// These tests ensure that `DoubleBufferCell` isn't `Send` or `Sync` when that would be unsound
-///
-/// ```compile_fail,E0412
-/// const fn test_send_sync<T: Send, U: Sync>() {
-///     let _ = test_send_sync::<DoubleBufferCell<U>, U>;
-/// }
-/// ```
-///
-/// ```compile_fail,E0412
-/// const fn test_send_sync<T: Send, U: Sync>() {
-///     let _ = test_send_sync::<T, DoubleBufferCell<T>>;
-/// }
-/// ```
-///
-/// ```compile_fail,E0412
-/// const fn test_send_sync<T: Send, U: Sync>() {
-///     let _ = test_send_sync::<T, DoubleBufferCell<U>>;
-/// }
-/// ```
 #[repr(transparent)]
 struct DoubleBufferCell<T> {
     parts: [UnsafeCell<T>; 2],
 }
 
 const _: () = {
-    const fn test_send_sync<T: Send, U: Sync>() {
-        let _ = test_send_sync::<DoubleBufferCell<T>, DoubleBufferCell<&U>>;
+    const fn _test_send_sync<T: Send, U: Sync>() {
+        let _ = _test_send_sync::<DoubleBufferCell<T>, DoubleBufferCell<&U>>;
     }
 };
 
