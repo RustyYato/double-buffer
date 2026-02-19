@@ -6,38 +6,35 @@ use std::{
     ops::Deref,
 };
 
+use dbuf::interface::Strategy;
 use hashbrown::HashTable;
 
-#[allow(clippy::type_complexity)]
-type TablePointer<T, S> = dbuf::triomphe::OffsetArc<
-    dbuf::raw::DoubleBufferData<
-        HashTable<T>,
-        dbuf::strategy::flashmap::FlashStrategy<
-            dbuf::strategy::flash_park_token::AdaptiveParkToken,
-        >,
-        S,
-    >,
->;
+pub type DefaultStrategy =
+    dbuf::strategy::flashmap::FlashStrategy<dbuf::strategy::flash_park_token::AdaptiveParkToken>;
 
 #[allow(clippy::type_complexity)]
-pub struct Writer<'env, K, V, S = RandomState> {
-    writer: dbuf::op::OpWriter<TablePointer<(K, V), S>, HashTableOperation<'env, K, V, S>>,
+type TablePointer<T, H, S> =
+    dbuf::triomphe::OffsetArc<dbuf::raw::DoubleBufferData<HashTable<T>, S, H>>;
+
+#[allow(clippy::type_complexity)]
+pub struct Writer<'env, K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+    writer: dbuf::op::OpWriter<TablePointer<(K, V), H, S>, HashTableOperation<'env, K, V, H>>,
 }
 
-pub struct Reader<K, V, S> {
-    reader: dbuf::raw::Reader<TablePointer<(K, V), S>>,
+pub struct Reader<K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+    reader: dbuf::raw::Reader<TablePointer<(K, V), H, S>>,
 }
 
 #[allow(clippy::type_complexity)]
-pub struct TableGuard<'a, K, V, S> {
-    reader: dbuf::raw::ReaderGuard<'a, HashTable<(K, V)>, TablePointer<(K, V), S>>,
+pub struct TableGuard<'a, K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+    reader: dbuf::raw::ReaderGuard<'a, HashTable<(K, V)>, TablePointer<(K, V), H, S>>,
 }
 
-pub struct ReadGuard<'a, T: ?Sized, K, V, S> {
-    reader: dbuf::raw::ReaderGuard<'a, T, TablePointer<(K, V), S>>,
+pub struct ReadGuard<'a, T: ?Sized, K, V, H = RandomState, S: Strategy = DefaultStrategy> {
+    reader: dbuf::raw::ReaderGuard<'a, T, TablePointer<(K, V), H, S>>,
 }
 
-impl<T: ?Sized, K, V, S> Deref for ReadGuard<'_, T, K, V, S> {
+impl<T: ?Sized, K, V, H, S: Strategy> Deref for ReadGuard<'_, T, K, V, H, S> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -45,7 +42,7 @@ impl<T: ?Sized, K, V, S> Deref for ReadGuard<'_, T, K, V, S> {
     }
 }
 
-pub enum HashTableOperation<'env, K, V, S> {
+pub enum HashTableOperation<'env, K, V, H> {
     Insert {
         key: K,
         value: V,
@@ -55,38 +52,38 @@ pub enum HashTableOperation<'env, K, V, S> {
     },
     #[allow(clippy::type_complexity)]
     Custom {
-        f: Box<dyn FnMut(bool, &mut HashTable<(K, V)>, &S) + Send + 'env>,
+        f: Box<dyn FnMut(bool, &mut HashTable<(K, V)>, &H) + Send + 'env>,
     },
 }
 
 impl<K, V> Writer<'_, K, V> {
     pub fn new() -> Self {
-        Self::with_hasher(RandomState::new())
+        Self::with_hasher_and_strategy(RandomState::new(), DefaultStrategy::new())
     }
 }
 
-impl<K, V, S> Writer<'_, K, V, S> {
-    pub fn with_hasher(hasher: S) -> Self {
+impl<K, V, H, S: Strategy> Writer<'_, K, V, H, S> {
+    pub fn with_hasher_and_strategy(hasher: H, strategy: S) -> Self {
         Self {
             writer: dbuf::op::OpWriter::from(dbuf::raw::Writer::new(
                 dbuf::triomphe::UniqueArc::new(dbuf::raw::DoubleBufferData::with_extras(
                     HashTable::new(),
                     HashTable::new(),
-                    dbuf::strategy::flashmap::FlashStrategy::new(),
+                    strategy,
                     hasher,
                 )),
             )),
         }
     }
 
-    pub fn reader(&self) -> Reader<K, V, S> {
+    pub fn reader(&self) -> Reader<K, V, H, S> {
         Reader {
             reader: self.writer.reader(),
         }
     }
 }
 
-impl<'env, K, V, S: BuildHasher> Writer<'env, K, V, S> {
+impl<'env, K, V, H: BuildHasher, S: Strategy> Writer<'env, K, V, H, S> {
     pub fn insert(&mut self, key: K, value: V)
     where
         K: Hash + Eq + Clone,
@@ -144,6 +141,7 @@ impl<'env, K, V, S: BuildHasher> Writer<'env, K, V, S> {
     where
         K: Hash + Eq + Clone,
         V: Clone,
+        S: dbuf::interface::BlockingStrategy<SwapError = core::convert::Infallible>,
     {
         self.writer.swap_buffers(&mut ());
     }
@@ -152,6 +150,7 @@ impl<'env, K, V, S: BuildHasher> Writer<'env, K, V, S> {
     where
         K: Hash + Eq + Clone,
         V: Clone,
+        S: dbuf::interface::AsyncStrategy<SwapError = core::convert::Infallible>,
     {
         self.writer.aswap_buffers(&mut ()).await;
     }
@@ -248,9 +247,9 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
     }
 }
 
-impl<K, V, S: Default> Default for Writer<'_, K, V, S> {
+impl<K, V, H: Default, S: Strategy + Default> Default for Writer<'_, K, V, H, S> {
     fn default() -> Self {
-        Self::with_hasher(Default::default())
+        Self::with_hasher_and_strategy(Default::default(), Default::default())
     }
 }
 
